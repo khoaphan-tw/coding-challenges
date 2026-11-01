@@ -4,7 +4,7 @@ COMPOSE := docker compose
 # testcontainers + Colima: use the socket path as seen from inside the VM.
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE ?= /var/run/docker.sock
 
-.PHONY: help up down clean ps logs build test test-int test-e2e test-all vet trace-ride trace-logs demo postman postman-gen proto openapi-lint grpc-offers grpc-location rebuild-geo replay-dlq psql
+.PHONY: help up down clean ps logs build lint lint-go fmt test test-int test-e2e test-all vet trace-ride trace-logs demo postman postman-gen proto openapi-lint grpc-offers grpc-location rebuild-geo replay-dlq psql
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -29,6 +29,14 @@ build: ## Compile all Go code
 
 vet: ## go vet (all build tags)
 	go vet ./... && go vet -tags integration ./... && go vet -tags e2e ./test/e2e/
+
+lint: lint-go openapi-lint ## All linters: Go (golangci-lint) + OpenAPI (Redocly)
+
+lint-go: ## Go linters from .golangci.yml (needs golangci-lint: brew install golangci-lint)
+	golangci-lint run ./...
+
+fmt: ## Format Go code and fix import order
+	golangci-lint fmt ./...
 
 test: ## Unit tests (no Docker needed)
 	go test -count=1 ./...

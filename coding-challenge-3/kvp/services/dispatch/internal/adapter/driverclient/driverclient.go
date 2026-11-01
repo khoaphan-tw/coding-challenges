@@ -35,7 +35,7 @@ func (c *Client) ListDrivers(ctx context.Context) ([]usecase.DriverSnapshot, err
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("driver-service returned %d", resp.StatusCode)
 	}

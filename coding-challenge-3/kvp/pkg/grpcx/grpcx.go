@@ -42,7 +42,7 @@ func Serve(ctx context.Context, s *grpc.Server, addr string) error {
 	healthpb.RegisterHealthServer(s, hs)
 	reflection.Register(s)
 
-	lis, err := net.Listen("tcp", addr)
+	lis, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
 	if err != nil {
 		return err
 	}
@@ -109,7 +109,7 @@ func (s *loggedStream) logCtx() context.Context {
 	if c, ok := s.ctx.Load().(context.Context); ok {
 		return c
 	}
-	return s.ServerStream.Context()
+	return s.Context()
 }
 
 func (s *loggedStream) RecvMsg(m any) error {
@@ -117,7 +117,7 @@ func (s *loggedStream) RecvMsg(m any) error {
 		return err
 	}
 	s.recv.Add(1)
-	ctx := withDriver(s.ServerStream.Context(), m)
+	ctx := withDriver(s.Context(), m)
 	s.ctx.Store(ctx)
 	slog.InfoContext(ctx, "grpc message", "direction", "recv", "method", s.method, "body", body(m))
 	return nil

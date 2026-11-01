@@ -11,8 +11,9 @@ import (
 	"encoding/json"
 	"io/fs"
 	"log/slog"
-	"ridehail/pkg/messaging"
 	"time"
+
+	"ridehail/pkg/messaging"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"

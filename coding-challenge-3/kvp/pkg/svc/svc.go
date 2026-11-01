@@ -93,8 +93,15 @@ func Run(name string, migrations []fs.FS, setup func(ctx context.Context, rt *Ru
 		if strings.HasPrefix(addr, ":") {
 			addr = "localhost" + addr
 		}
-		resp, err := (&http.Client{Timeout: 2 * time.Second}).Get("http://" + addr + "/readyz")
-		if err != nil || resp.StatusCode != 200 {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/readyz", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			os.Exit(1)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != 200 {
 			os.Exit(1)
 		}
 		os.Exit(0)

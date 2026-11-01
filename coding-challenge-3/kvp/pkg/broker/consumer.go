@@ -7,9 +7,10 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
-	"ridehail/pkg/messaging"
 	"strings"
 	"time"
+
+	"ridehail/pkg/messaging"
 
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kerr"

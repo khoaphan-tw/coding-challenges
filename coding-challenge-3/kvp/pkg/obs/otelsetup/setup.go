@@ -9,8 +9,9 @@ import (
 	"errors"
 	"log/slog"
 	"os"
-	"ridehail/pkg/obs"
 	"time"
+
+	"ridehail/pkg/obs"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
