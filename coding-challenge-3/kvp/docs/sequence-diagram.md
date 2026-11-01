@@ -4,6 +4,17 @@ All arrows between services go through Redpanda via each service's **outbox**. D
 
 Services: **RS** = ride-service, **DS** = driver-service, **XS** = dispatch-service (saga orchestrator).
 
+| # | Flow | Requirements |
+|---|---|---|
+| 1 | [Happy path: request → offer → accept → complete](#1-happy-path-request--offer--accept--complete) | AC-01, 02, 04, 05, 06, 10 |
+| 2 | [Reject → rematch](#2-reject--rematch-ac-05-ac-07) | AC-05, 07 |
+| 3 | [Offer timeout](#3-offer-timeout-ac-05-ac-06) | AC-05, 06 |
+| 4 | [Two rides race for the same driver](#4-two-rides-race-for-the-same-driver-ac-09) | AC-09 |
+| 5 | [Duplicate delivery](#5-duplicate-delivery-ac-08-ac-10) | AC-08, 10 |
+| 6 | [Cancel races](#6-cancel-races-ac-05-ac-06) | AC-05, 06 |
+| 7 | [Driver availability and location feed the GEO index](#7-driver-availability-and-location-feed-the-geo-index) | AC-02, 03, 04 |
+| 8 | [Crash and recovery](#8-crash-and-recovery-ac-10) | AC-10 |
+
 ---
 
 ## 1. Happy path: request → offer → accept → complete
@@ -97,19 +108,19 @@ sequenceDiagram
     participant DS as driver-service
     participant RS as ride-service
 
-    SW->>XDB: SELECT … FROM offers WHERE status='PENDING' AND expires_at < now()<br/>FOR UPDATE SKIP LOCKED LIMIT 100
+    SW->>XDB: SELECT ride_id, id FROM offers WHERE status='PENDING' AND expires_at <= now() LIMIT 100
     XDB-->>SW: [O1 (R1, D001)]
-    SW->>XDB: [tx] O1 → EXPIRED, exclude(R1, D001, 'timeout'), saga → MATCHING, outbox Release + Unassign
+    SW->>XDB: [tx] lock saga R1 (FOR UPDATE SKIP LOCKED)<br/>UPDATE offers SET EXPIRED WHERE id=O1 AND status='PENDING' AND expires_at <= now()<br/>exclude(R1, D001, 'EXPIRED'), saga → MATCHING, outbox Release + Unassign
     SW-)DS: ReleaseDriver(R1, D001)
     SW-)RS: UnassignDriver(R1, O1)
     Note over SW: then continues matching, exactly like a rejection
 ```
 
-`SKIP LOCKED` lets several dispatch replicas sweep without processing the same offer twice.
+The sweeper locks the saga first, like accept and reject do, so the three can never deadlock. `SKIP LOCKED` lets several dispatch replicas sweep without blocking each other, and the conditional `UPDATE … WHERE status='PENDING'` means an offer is expired at most once. If the driver accepted a moment earlier, the update matches nothing and the sweeper moves on.
 
 ---
 
-## 4. Concurrency: two rides race for the same driver (AC-09)
+## 4. Two rides race for the same driver (AC-09)
 
 ```mermaid
 sequenceDiagram
@@ -187,3 +198,67 @@ sequenceDiagram
 ```
 
 The ride decides cancellation (it owns the lifecycle). Whatever order the messages arrive in, the end state is the same: ride `CANCELLED`, driver `AVAILABLE`, saga `CANCELLED`. `ReleaseDriver` comes after `MarkDriverBusy` on the same `driverId` partition, so the driver cannot end up stuck in `BUSY`.
+
+---
+
+## 7. Driver availability and location feed the GEO index
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor D as Driver D011
+    participant DS as driver-service
+    participant XS as dispatch-service (projection)
+    participant R as Redis GEO
+
+    D->>DS: PUT /drivers/D011/availability {"status":"AVAILABLE"}
+    DS->>DS: [tx] UPDATE drivers SET status='AVAILABLE', version=v+1<br/>WHERE id='D011' AND status='OFFLINE' + outbox DriverStatusChanged(v+1)
+    DS-->>D: 200
+    D->>DS: PUT /drivers/D011/location {lat, lng}
+    DS->>DS: [tx] UPDATE drivers SET lat, lng, version=v+2 + outbox DriverLocationUpdated(v+2)
+    DS-->>D: 200
+    DS-)XS: DriverStatusChanged(D011, AVAILABLE, v+1)
+    XS->>R: Lua: v+1 > stored? → HSET driver:D011 + GEOADD geo:drivers:available
+    XS->>XS: driver became AVAILABLE → wake WAITING_FOR_DRIVER sagas
+    DS-)XS: DriverLocationUpdated(D011, v+2)
+    XS->>R: Lua: v+2 > v+1 → update position
+    Note over XS,R: A late or duplicate event with an older version is ignored,<br/>so matching always uses the latest known location (AC-03).<br/>OFFERED/BUSY/OFFLINE → ZREM: only AVAILABLE drivers are candidates (AC-02, AC-04).
+```
+
+Tests: `TestIndexKeepsOnlyLatestAvailableDrivers`, `TestEveryChangeEmitsVersionedEvent`, Postman folder 10 (a waiting ride gets the driver as soon as it moves close and goes AVAILABLE).
+
+---
+
+## 8. Crash and recovery (AC-10)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor P as Passenger
+    participant RS as ride-service
+    participant K as Redpanda
+    participant XS as dispatch-service
+
+    Note over XS: dispatch-service is down
+    P->>RS: POST /rides
+    RS->>RS: [tx] ride REQUESTED + outbox RideRequested
+    RS-->>P: 201 REQUESTED (the API does not depend on dispatch)
+    RS-)K: relay publishes RideRequested
+    Note over K: message waits; the consumer-group offset is not advanced
+    Note over XS: dispatch-service restarts
+    K-)XS: RideRequested (from the last committed offset)
+    XS->>XS: [tx] inbox + saga STARTED + outbox StartMatching
+    Note over XS: …normal flow continues; any PENDING offer that expired<br/>while it was down is expired by the sweeper and rematched
+```
+
+| Crash point | State left behind | Recovery | Duplicate risk handled by |
+|---|---|---|---|
+| Before the DB commit | Nothing (transaction rolled back) | Client or broker retries | — |
+| After the commit, before publishing | Outbox row unpublished | Relay publishes after restart | — |
+| After publishing, before marking published | Message published, row still unpublished | Relay re-publishes the **same `eventId`** | Consumer inbox |
+| Consumer: after its DB commit, before the offset commit | Side effect done, offset not committed | Message redelivered | Inbox (skipped) |
+| Consumer: handler keeps failing | Nothing committed | 5 retries with backoff + jitter, then `<topic>.dlq`; `make replay-dlq` | Inbox on replay |
+| Participant reply lost | Saga stuck in `STARTED`/`RESERVING` | Resumer re-sends the last command after 30 s | Idempotent commands (`rideId`/`offerId` guards) |
+
+Verified manually: kill dispatch-service, request a ride (`201 REQUESTED`), restart it, and the ride is `DRIVER_ASSIGNED` within seconds ([local-development.md §5](local-development.md#5-watch-with-lazydocker)).
+
