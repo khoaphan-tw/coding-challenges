@@ -35,7 +35,7 @@ Built for [Coding Challenge #3](../coding-challenge-3.md) as **three Go microser
 * [6. Documentation](#6-documentation)
   * [6.1 Reading paths](#61-reading-paths)
   * [6.2 All documents](#62-all-documents)
-* [7. 🏆 Bonus: What We Added Beyond the Requirements](#7--bonus-what-we-added-beyond-the-requirements)
+* [7. 🏆 Bonus: What We Added and Used](#7--bonus-what-we-added-and-used)
 
 ---
 
@@ -387,7 +387,7 @@ All detailed documents are in [docs/](docs/). The challenge requires [architectu
 
 ---
 
-## 7. 🏆 Bonus: What We Added Beyond the Requirements
+## 7. 🏆 Bonus: What We Added and Used
 
 A summary of the work that goes beyond the acceptance criteria, for the Creative Bonus.
 
