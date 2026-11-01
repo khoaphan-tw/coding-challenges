@@ -1,4 +1,4 @@
-# kvp - Coding Challenge #3: Ride-Hailing Dispatch Service
+# KVP (Khoa-Vinh-Phuong) - Coding Challenge #3: Ride-Hailing Dispatch Service
 
 A ride-hailing **dispatch service**: passengers request rides, the system offers each ride to the **nearest available driver**, drivers accept or reject, and rejected or expired offers are **rematched**. A driver can never be given two rides at once, duplicates are harmless, and every ride can be traced end to end.
 
@@ -7,22 +7,38 @@ Built for [Coding Challenge #3](../coding-challenge-3.md) as **three Go microser
 | | |
 |---|---|
 | **Requirements** | All 10 acceptance criteria and every §5 evaluation item are met and traced to code and tests → [requirements traceability](docs/requirements-traceability.md) |
+| **Quality** | golangci-lint + OpenAPI lint clean; GitHub Actions CI runs lint → tests → full-stack e2e on every push → [CI](#3-how-to-test) |
 | **Tests** | 32 unit + architecture, 23 integration (real Postgres/Redis), 12 end-to-end (REST + gRPC + OpenAPI contract), 56 Postman requests / 115 checks, all green → [testing](docs/testing.md) |
-| **Design** | C4 architecture, 8 sequence flows, 14 design patterns explained, 12 ADRs that each compare alternatives → [documentation](#documentation) |
+| **Design** | C4 architecture, 8 sequence flows, 14 design patterns explained, 12 ADRs that each compare alternatives → [documentation](#6-documentation) |
 | **Run it** | `make up && make demo` |
 
 ## Contents
 
-1. [Team Members](#team-members)
-2. [How to Run](#how-to-run)
-3. [How to Test](#how-to-test)
-4. [Approach](#approach): [architecture](#architecture) · [dispatch flow](#how-a-ride-is-dispatched) · [code structure](#code-structure) · [requirements coverage](#requirements-coverage) · [matching](#matching-strategy) · [concurrency](#concurrency-strategy) · [idempotency](#idempotency-strategy) · [event-driven](#event-driven-dispatch) · [observability](#observability) · [scalability](#scalability)
-5. [Design Decisions](#design-decisions): [tech stack](#why-this-tech-stack) · [trade-offs](#what-trade-offs-did-we-make) · [patterns](#what-patterns-did-we-use)
-6. [Documentation](#documentation): [reading paths](#reading-paths) · [all documents](#all-documents)
+* [1. Team Members](#1-team-members)
+* [2. How to Run](#2-how-to-run)
+* [3. How to Test](#3-how-to-test)
+* [4. Approach](#4-approach)
+  * [4.1 Architecture](#41-architecture)
+  * [4.2 How a ride is dispatched](#42-how-a-ride-is-dispatched)
+  * [4.3 Code structure](#43-code-structure)
+  * [4.4 Requirements coverage](#44-requirements-coverage)
+  * [4.5 Matching strategy](#45-matching-strategy)
+  * [4.6 Concurrency strategy](#46-concurrency-strategy)
+  * [4.7 Idempotency strategy](#47-idempotency-strategy)
+  * [4.8 Event-driven dispatch](#48-event-driven-dispatch)
+  * [4.9 Observability](#49-observability)
+  * [4.10 Scalability](#410-scalability)
+* [5. Design Decisions](#5-design-decisions)
+  * [5.1 Why this tech stack?](#51-why-this-tech-stack)
+  * [5.2 What trade-offs did we make?](#52-what-trade-offs-did-we-make)
+  * [5.3 What patterns did we use?](#53-what-patterns-did-we-use)
+* [6. Documentation](#6-documentation)
+  * [6.1 Reading paths](#61-reading-paths)
+  * [6.2 All documents](#62-all-documents)
 
 ---
 
-## Team Members
+## 1. Team Members
 
 1. Khoa Phan (_Developer_): khoa.phan@thoughtworks.com
 2. Duy Phuong Nguyen (_Developer_): phuong.nguyen@thoughtworks.com
@@ -30,9 +46,9 @@ Built for [Coding Challenge #3](../coding-challenge-3.md) as **three Go microser
 
 ---
 
-## How to Run
+## 2. How to Run
 
-### 1. Prerequisites (macOS, with Docker)
+### 2.1 Prerequisites (macOS, with Docker)
 
 ```bash
 brew install colima docker docker-compose docker-buildx lazydocker go jq
@@ -41,7 +57,7 @@ colima start --cpu 4 --memory 8 --vm-type vz --vz-rosetta
 
 Add `"cliPluginsExtraDirs": ["/opt/homebrew/lib/docker/cli-plugins"]` to `~/.docker/config.json` so `docker compose` works. Step-by-step guide, Intel Macs and troubleshooting: [docs/local-development.md](docs/local-development.md).
 
-### 2. Start
+### 2.2 Start
 
 ```bash
 cd coding-challenge-3/kvp
@@ -51,7 +67,7 @@ make up          # build + start all 10 containers, waits until healthy (~30 s a
 | Open | What |
 |---|---|
 | http://localhost:8080 | **REST API v1** (gateway) |
-| localhost:9090 | **gRPC API v2** (gateway): driver location stream and offer push, see [below](#grpc-api-v2) |
+| localhost:9090 | **gRPC API v2** (gateway): driver location stream and offer push, see [below](#24-grpc-api-v2) |
 | http://localhost:8080/docs/ | **Swagger UI**: the REST contract [api/openapi.yaml](api/openapi.yaml), with "Try it out" |
 | http://localhost:3000 | Grafana → Dashboards → *Dispatch overview* (logs, traces, metrics) |
 | http://localhost:8088 | Redpanda Console (topics, messages, consumer groups) |
@@ -59,7 +75,7 @@ make up          # build + start all 10 containers, waits until healthy (~30 s a
 
 Seeded data: passengers `P001–P010`; drivers `D001–D010` `AVAILABLE` ~220 m apart north of Ben Thanh (HCMC); `D011–D020` `OFFLINE`.
 
-### 3. Try it
+### 2.3 Try it
 
 ```bash
 make demo        # walkthrough: request → reject → rematch → accept → complete, duplicates, a race
@@ -81,7 +97,7 @@ make trace-ride RIDE=<rideId>                                  # what happened, 
 
 Full API: [api/openapi.yaml](api/openapi.yaml) (OpenAPI 3.0, also at http://localhost:8080/docs/) and [architecture §6](docs/architecture.md#6-public-api).
 
-### gRPC API v2
+### 2.4 gRPC API v2
 
 The two highest-frequency driver-app calls also exist as **gRPC streams** on `localhost:9090`. They call the same use cases as REST:
 
@@ -98,7 +114,7 @@ make grpc-location DRIVER=D010    # streams two location updates
 
 Contracts: [api/proto](api/proto/). Why only these two: [ADR-010 Part 6](docs/adr/ADR-010-api-and-identifiers.md#part-6-grpc-api-v2-for-two-driver-app-apis).
 
-### 4. Stop
+### 2.5 Stop
 
 ```bash
 make down        # stop, keep data      ·  make clean   stop and delete all data
@@ -107,10 +123,11 @@ colima stop      # free the VM's CPU and RAM
 
 ---
 
-## How to Test
+## 3. How to Test
 
 | Command | What runs | Needs | Time |
 |---|---|---|---|
+| `make lint` | **golangci-lint** ([.golangci.yml](.golangci.yml): errcheck, staticcheck, govet, unused, bodyclose, noctx, gofmt/goimports, …) + **OpenAPI lint** | golangci-lint, Node | ~10 s |
 | `make test` | Unit tests (state machines, matching, validation, ride use cases with fakes) + **architecture rules** | Go | < 2 s |
 | `make test-int` | + **integration** on real Postgres 18 / Redis 8 via testcontainers (concurrency race, idempotency, saga flows) | Colima | ~15 s |
 | `make test-e2e` | **End-to-end** through the gateway, incl. the real 30 s offer timeout | `make up` | ~40 s |
@@ -122,15 +139,17 @@ Highlights:
 * **Idempotency (AC-08):** the same `Idempotency-Key` sent 10× in parallel creates one ride; 5 parallel accepts change state once.
 * **Saga:** rematch, permanent exclusion, timeout, cancel/complete compensation, accept racing timeout.
 
+**CI (GitHub Actions):** [.github/workflows/cc3-kvp.yml](../../.github/workflows/cc3-kvp.yml) runs on every push and pull request that touches this folder. `lint` and `test` (vet, unit, architecture, integration) run in parallel; when both pass, `e2e` starts the whole stack in Docker and runs the e2e tests and the Postman collection (with a 5 s offer timeout). Container logs are uploaded when it fails.
+
 Every test and the invariants they protect: [docs/testing.md](docs/testing.md). Which test proves which requirement: [docs/requirements-traceability.md](docs/requirements-traceability.md).
 
 ---
 
-## Approach
+## 4. Approach
 
 The system is split along its three aggregates (**ride**, **driver**, **dispatch/offer**) into three services that never share a database. They cooperate through an **orchestrated saga**: dispatch-service sends commands and reacts to replies and events on Redpanda. Every write is a local Postgres transaction that also stores its outgoing messages (**transactional outbox**), and every consumer skips duplicates (**inbox**). Every race is decided by **one atomic SQL statement** in the service that owns the data. Redis only *suggests* candidates; Postgres *decides*.
 
-### Architecture
+### 4.1 Architecture
 
 ```mermaid
 flowchart LR
@@ -154,7 +173,7 @@ flowchart LR
 
 Why microservices when a modular monolith is allowed: it was a team learning goal, and the split follows how the parts scale (location writes dominate at scale). The honest comparison is in [ADR-006](docs/adr/ADR-006-service-architecture.md). Full C4 views, message catalogue and data model: [docs/architecture.md](docs/architecture.md).
 
-### How a ride is dispatched
+### 4.2 How a ride is dispatched
 
 ```
 1. POST /rides ──► ride REQUESTED ──(RideRequested)──► dispatch starts a saga
@@ -169,7 +188,7 @@ Why microservices when a modular monolith is allowed: it was a team learning goa
 
 Every flow and race as a sequence diagram: [docs/sequence-diagram.md](docs/sequence-diagram.md).
 
-### Code structure
+### 4.3 Code structure
 
 Each service follows **Clean Architecture**: dependencies point inward only, and `make test` fails if they don't ([ADR-012](docs/adr/ADR-012-clean-architecture.md)).
 
@@ -187,7 +206,7 @@ test/arch · test/e2e      architecture rules · black-box tests
 
 Full layout: [architecture §14](docs/architecture.md#14-repository-layout).
 
-### Requirements coverage
+### 4.4 Requirements coverage
 
 | AC | Requirement | How it is met | Key proof | Details |
 |---|---|---|---|---|
@@ -202,7 +221,7 @@ Full layout: [architecture §14](docs/architecture.md#14-repository-layout).
 | 09 | Concurrent assignment | Atomic `UPDATE … WHERE status='AVAILABLE'` + partial unique indexes | `TestConcurrentReservationOnlyOneWins` (50 rounds) | [→](docs/requirements-traceability.md#ac-09-concurrent-driver-assignment) |
 | 10 | Event-driven dispatch | Outbox → Redpanda → saga; retries, DLQ, resume | `TestHappyPath`, crash drill | [→](docs/requirements-traceability.md#ac-10-event-driven-dispatch) |
 
-### Matching strategy
+### 4.5 Matching strategy
 
 *Nearest `AVAILABLE` driver within `MATCH_RADIUS_M` (default 2000 m); equidistant drivers → smallest `driverId`.*
 
@@ -212,7 +231,7 @@ Full layout: [architecture §14](docs/architecture.md#14-repository-layout).
 
 Alternatives (PostGIS, Tile38, Elasticsearch, batch assignment, ETA routing): [ADR-001](docs/adr/ADR-001-matching.md).
 
-### Concurrency strategy
+### 4.6 Concurrency strategy
 
 **The race:** two sagas read Redis at the same moment and both pick D001. "Read status, then write" would let both succeed.
 
@@ -232,7 +251,7 @@ Postgres row locking serialises the racers. The loser gets `DriverReservationFai
 
 Defence in depth: partial unique indexes (at most one `PENDING` offer per driver and per ride) and a `CHECK` on drivers. Ten alternatives compared (mutex, optimistic version, SERIALIZABLE, Redlock, etcd, actors, …): [ADR-002](docs/adr/ADR-002-concurrency.md).
 
-### Idempotency strategy
+### 4.7 Idempotency strategy
 
 | What | How |
 |---|---|
@@ -243,7 +262,7 @@ Defence in depth: partial unique indexes (at most one `PENDING` offer per driver
 | `RideCreated ×3` | The saga's primary key is the ride id, so there is one saga whatever the number of deliveries |
 | Driver commands | Carry `rideId`; a late `ReleaseDriver(R1)` never frees a driver now serving R2 |
 
-### Event-driven dispatch
+### 4.8 Event-driven dispatch
 
 * **Why asynchronous:** `POST /rides` answers immediately; matching may take several offer rounds and minutes and must not hold a request open. Spikes queue in Redpanda, services can restart without losing work, and dispatch scales by partition.
 * **How:** ride created → `RideRequested` (via the outbox) → Redpanda → dispatch consumer → saga → matching. Topics are keyed by `rideId`/`driverId`, so messages about one ride stay in order.
@@ -252,7 +271,7 @@ Defence in depth: partial unique indexes (at most one `PENDING` offer per driver
 
 Details: [ADR-004](docs/adr/ADR-004-messaging-outbox-inbox.md), [ADR-009](docs/adr/ADR-009-message-broker.md), [architecture §12](docs/architecture.md#12-failure-modes-and-recovery).
 
-### Observability
+### 4.9 Observability
 
 * **Logs:** plain `key=value` lines. Every line of a ride's journey carries `ride_id`, `driver_id`, `event_id`, `causation_id` and the ride's `trace_id`. HTTP calls are logged with request and response bodies; every produced and consumed message is logged with its value.
 * **Traces:** **one trace per ride**, from `POST /rides` through offers, rejections, timeouts and acceptance to completion, across all services and Redpanda.
@@ -267,7 +286,7 @@ make trace-logs TRACE=<traceId>   # every log line of the journey, incl. bodies 
 
 Runbook (Loki and Tempo queries, dashboard, alerts): [docs/observability.md](docs/observability.md).
 
-### Scalability
+### 4.10 Scalability
 
 Location updates grow to **250,000 writes/s at 1M drivers**, while dispatch stays below ~1,000/s. Scaling is about the location stream and the geo index, not rides.
 
@@ -281,9 +300,9 @@ Plus B4–B6, S3/S4/S6, T4/T5, the 1k → 100k → 1M evolution and the seven to
 
 ---
 
-## Design Decisions
+## 5. Design Decisions
 
-### Why this tech stack?
+### 5.1 Why this tech stack?
 
 | Area | Chosen | Why (short) | Alternatives compared in |
 |---|---|---|---|
@@ -299,7 +318,7 @@ Plus B4–B6, S3/S4/S6, T4/T5, the 1k → 100k → 1M evolution and the seven to
 | Runtime | Colima + Compose + lazydocker, nginx gateway | No Docker Desktop; one-command start | [local-development.md](docs/local-development.md), [deploy/nginx.conf](deploy/nginx.conf) |
 | Testing | Unit + fakes + testcontainers + e2e + Postman | AC-09 proven on a real database | [ADR-011](docs/adr/ADR-011-testing-strategy.md) |
 
-### What trade-offs did we make?
+### 5.2 What trade-offs did we make?
 
 | We chose | Over | Gained | Paid |
 |---|---|---|---|
@@ -309,7 +328,7 @@ Plus B4–B6, S3/S4/S6, T4/T5, the 1k → 100k → 1M evolution and the seven to
 | Clean Architecture | One package per service | Testable use cases, swappable adapters, enforced boundaries | ~15 ports, more files; transaction passed implicitly in `context` |
 | Accept returns at the pivot | Waiting for ride + driver updates | Fast, honest response | The ride shows `DRIVER_ACCEPTED` a few ms later |
 
-### What patterns did we use?
+### 5.3 What patterns did we use?
 
 Fourteen patterns, grouped by the problem they solve. Each one is explained in **[docs/patterns.md](docs/patterns.md)**: the problem, how it works here, the code, what breaks without it, its cost, and the tests that prove it.
 
@@ -334,11 +353,11 @@ How they combine on a single accept call, and the patterns we decided **not** to
 
 ---
 
-## Documentation
+## 6. Documentation
 
 All detailed documents are in [docs/](docs/). The challenge requires [architecture.md](docs/architecture.md), [sequence-diagram.md](docs/sequence-diagram.md), [ADR-001](docs/adr/ADR-001-matching.md) and [ADR-002](docs/adr/ADR-002-concurrency.md) by name; the rest add detail.
 
-### Reading paths
+### 6.1 Reading paths
 
 | You are… | Read in this order | Time |
 |---|---|---|
@@ -348,7 +367,7 @@ All detailed documents are in [docs/](docs/). The challenge requires [architectu
 | **An engineer investigating a ride** | [observability.md](docs/observability.md) (`make trace-ride`, `make trace-logs`, Tempo, Grafana) | 10 min |
 | **Thinking about growth and limits** | [scalability.md](docs/scalability.md) → [known limitations](docs/architecture.md#15-known-limitations) | 15 min |
 
-### All documents
+### 6.2 All documents
 
 | Document | What it answers |
 |---|---|

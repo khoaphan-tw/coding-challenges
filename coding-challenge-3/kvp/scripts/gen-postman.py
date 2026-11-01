@@ -273,7 +273,7 @@ items.append(folder("AC-09 · Two rides, one driver", (
 
 collection = {
     "info": {
-        "name": "Ride-Hailing Dispatch (kvp)",
+        "name": "Ride-Hailing Dispatch (KVP)",
         "description": (
             "Acceptance-criteria scenarios for Coding Challenge #3. Start the stack first (`make up` in coding-challenge-3/kvp).\n\n"
             "* **Run** the collection with the Runner (keep the order), or one folder at a time. "

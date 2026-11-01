@@ -15,6 +15,7 @@ How the system is tested, what each level proves, and the invariants the tests p
 
 | Level | What it proves | Tool | Count | Command | Needs |
 |---|---|---|---|---|---|
+| Static checks | Ignored errors, bugs, dead code, unclosed bodies, formatting; OpenAPI rules | golangci-lint ([.golangci.yml](../.golangci.yml)), Redocly | 8 linters + 2 formatters | `make lint` | golangci-lint, Node |
 | Unit: domain | State machines, matching, validation | `go test` | 23 | `make test` | Go |
 | Unit: use cases | Ride flows via fakes of the ports: idempotency, duplicate commands, rejection replies | `go test` | 5 | `make test` | Go |
 | Architecture | Clean Architecture dependency rule | `go test` + `go list` | 4 | `make test` | Go |
@@ -62,6 +63,7 @@ How the system is tested, what each level proves, and the invariants the tests p
 ## 5. Running
 
 ```bash
+make lint        # golangci-lint + OpenAPI lint; `make fmt` fixes formatting and imports
 make test        # unit + architecture (no Docker), < 2 s
 make test-int    # + integration (testcontainers on Colima), ~15 s
 make up && make test-e2e   # end-to-end incl. the real 30 s timeout, ~40 s
@@ -70,6 +72,18 @@ go test -tags e2e -short ./test/e2e/   # e2e without the 30 s timeout test
 ```
 
 With Colima, testcontainers needs `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock`; the Makefile sets it. Troubleshooting: [local-development.md §8](local-development.md#8-troubleshooting).
+
+### Continuous integration
+
+GitHub Actions workflow [.github/workflows/cc3-kvp.yml](../../../.github/workflows/cc3-kvp.yml) (at the repository root, where GitHub reads workflows) runs on every push and pull request that changes `coding-challenge-3/kvp/**`:
+
+```text
+lint ──┐   golangci-lint (pinned v2.15.0) + OpenAPI lint                         ~1 min
+       ├──> e2e   make up → make test-e2e → make postman (OFFER_TIMEOUT=5s)       ~6 min
+test ──┘   make vet → make test → make test-int (testcontainers on the runner)   ~3 min
+```
+
+Every step is a Makefile target, so CI runs exactly what you run locally. On failure the `e2e` job uploads `docker compose logs` as the `compose-logs` artifact. A newer push to the same branch cancels the running workflow. Actions must be enabled once in the fork's **Actions** tab.
 
 ## 6. Not tested (yet)
 

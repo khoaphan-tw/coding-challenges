@@ -142,7 +142,7 @@ Every requirement of [Coding Challenge #3](../../coding-challenge-3.md) is mappe
 | Acceptance bullet | How it is met | Code | Tests / evidence |
 |---|---|---|---|
 | Ride Created → Dispatch Event → Driver Matching | `POST /rides` → outbox `RideRequested` → Redpanda → dispatch consumer → saga → `Match` | [usecase/rides.go](../services/ride/internal/usecase/rides.go), [pkg/broker](../pkg/broker/), [adapter/messaging](../services/dispatch/internal/adapter/messaging/messaging.go) | E `TestHappyPath` (201 returns `REQUESTED`, matching happens afterwards); U-rideUC `TestCreateRidePublishesRideRequested`; `make trace-logs` shows produce → consume → match |
-| README explains why asynchronous | — | — | [README › Event-driven](../README.md#event-driven-dispatch), [ADR-004](adr/ADR-004-messaging-outbox-inbox.md) |
+| README explains why asynchronous | — | — | [README › Event-driven](../README.md#48-event-driven-dispatch), [ADR-004](adr/ADR-004-messaging-outbox-inbox.md) |
 | …what happens if a message is delivered twice | Inbox + idempotent domain | — | same; tests in AC-08 |
 | …what happens if processing fails | Rollback, no offset commit, 5 retries with backoff + jitter, DLQ, resumer | [pkg/broker/consumer.go](../pkg/broker/consumer.go) | same; [architecture §12](architecture.md#12-failure-modes-and-recovery); manual crash drill |
 
@@ -204,15 +204,15 @@ The test strategy (levels, invariants, how to run) is in [testing.md](testing.md
 | `docs/adr/ADR-001-matching.md` | ✅ |
 | `docs/adr/ADR-002-concurrency.md` | ✅ |
 | API contract (extra) | ✅ [api/openapi.yaml](../api/openapi.yaml) (REST, browsable at http://localhost:8080/docs/), [api/proto](../api/proto/) (gRPC v2) |
-| README: how to run | ✅ [README › How to run](../README.md#how-to-run) |
-| README: how to run tests | ✅ [README › How to test](../README.md#how-to-test) |
-| README: architecture | ✅ [README › Architecture](../README.md#architecture) |
-| README: matching strategy | ✅ [README › Matching](../README.md#matching-strategy) |
-| README: concurrency strategy | ✅ [README › Concurrency](../README.md#concurrency-strategy) |
-| README: idempotency strategy | ✅ [README › Idempotency](../README.md#idempotency-strategy) |
-| README: event-driven approach | ✅ [README › Event-driven](../README.md#event-driven-dispatch) |
-| README: scalability considerations | ✅ [README › Scalability](../README.md#scalability) |
-| README: known limitations | ✅ [README › Documentation](../README.md#documentation) → [architecture §15](architecture.md#15-known-limitations) |
+| README: how to run | ✅ [README › How to run](../README.md#2-how-to-run) |
+| README: how to run tests | ✅ [README › How to test](../README.md#3-how-to-test) |
+| README: architecture | ✅ [README › Architecture](../README.md#41-architecture) |
+| README: matching strategy | ✅ [README › Matching](../README.md#45-matching-strategy) |
+| README: concurrency strategy | ✅ [README › Concurrency](../README.md#46-concurrency-strategy) |
+| README: idempotency strategy | ✅ [README › Idempotency](../README.md#47-idempotency-strategy) |
+| README: event-driven approach | ✅ [README › Event-driven](../README.md#48-event-driven-dispatch) |
+| README: scalability considerations | ✅ [README › Scalability](../README.md#410-scalability) |
+| README: known limitations | ✅ [README › Documentation](../README.md#6-documentation) → [architecture §15](architecture.md#15-known-limitations) |
 
 ## 3. Team constraints
 
@@ -223,7 +223,7 @@ The test strategy (levels, invariants, how to run) is in [testing.md](testing.md
 | T3 | Observability | OpenTelemetry → Grafana LGTM; one trace per ride ([ADR-005](adr/ADR-005-observability.md), [observability.md](observability.md)) |
 | T4 | Everything in Docker; Colima + lazydocker via brew, no Docker Desktop | `make up` ([local-development.md](local-development.md), [docker-compose.yml](../docker-compose.yml)) |
 | T5 | Redis GEO + Kafka/Redpanda + PostgreSQL | [ADR-001](adr/ADR-001-matching.md), [ADR-008](adr/ADR-008-data-stores.md), [ADR-009](adr/ADR-009-message-broker.md) |
-| T6 | Documents in `docs/` | this folder ([README › Documentation](../README.md#documentation)) |
+| T6 | Documents in `docs/` | this folder ([README › Documentation](../README.md#6-documentation)) |
 
 ## 4. Scope, assumptions and out of scope
 
@@ -240,12 +240,14 @@ The test strategy (levels, invariants, how to run) is in [testing.md](testing.md
 
 ## 5. Evidence: latest test run
 
-Run on 2026-11-01 (Colima, Apple Silicon), after the Clean Architecture refactor.
+Run on 2026-11-01 (Colima, Apple Silicon), after adding gRPC v2, the OpenAPI contract test, golangci-lint and CI. The same suites run in GitHub Actions on every push ([testing › CI](testing.md#continuous-integration)).
 
 | Suite | Command | Result |
 |---|---|---|
+| Lint (golangci-lint + OpenAPI) | `make lint` | 0 issues ✅ |
 | Unit + architecture | `make test` | 32 tests in 6 packages ✅ |
 | Integration (testcontainers: Postgres 18, Redis 8) | `make test-int` | 23 tests in 4 packages ✅ |
 | End-to-end (gateway REST + gRPC + OpenAPI contract, incl. the real 30 s timeout) | `make test-e2e` | 12 tests ✅ (~38 s) |
 | Postman / newman | `make postman` | 56 requests, 115 assertions, 0 failed ✅ |
+| Same as CI (`OFFER_TIMEOUT=5s make up`) | e2e + Postman | 12 tests ✅ (~13 s), 115 assertions ✅ |
 | Architecture rules | part of `make test` | domain pure; no infrastructure in inner rings; adapters independent ✅ |

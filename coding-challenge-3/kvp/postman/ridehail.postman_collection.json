@@ -1,6 +1,6 @@
 {
   "info": {
-    "name": "Ride-Hailing Dispatch (kvp)",
+    "name": "Ride-Hailing Dispatch (KVP)",
     "description": "Acceptance-criteria scenarios for Coding Challenge #3. Start the stack first (`make up` in coding-challenge-3/kvp).\n\n* **Run** the collection with the Runner (keep the order), or one folder at a time. From the terminal: `make postman`.\n* **Folders:** one happy-path scenario, then one folder per acceptance criterion (AC-01 … AC-09). AC-10 (event-driven dispatch) is what every folder relies on: each result is reached asynchronously.\n* **Self-contained:** each folder's first request picks a random spot on the map and creates its own drivers through the driver-service fixture API (`{{driverServiceUrl}}/internal/drivers/...`).\n* **Asynchronous:** requests that check a result first wait in their pre-request script until it is reached.\n* **Variables:** `baseUrl` (gateway, http://localhost:8080) and `driverServiceUrl` (http://localhost:8082).\n* **API reference:** `api/openapi.yaml` (REST). gRPC v2 is not in this collection: see `api/proto` and `make grpc-offers`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },

@@ -37,6 +37,8 @@ The riskiest code is not in Go functions; it is in the **interaction with Postgr
 | Integration | `go test -tags integration` + testcontainers | 4 packages | **50 rounds of two goroutines reserving one driver** on real Postgres; idempotent create incl. 10 parallel duplicates; saga flows with simulated participants (reject → rematch, timeout, cancel/complete compensation, accept racing timeout, duplicate events); Redis GEO versioning |
 | E2E | `go test -tags e2e` against `make up` | 12 tests | Happy path, rematch, duplicate create/accept, two rides one driver, cancel release, invalid transitions, the real 30 s timeout, gRPC v2 location stream and offer push, every REST response validated against `api/openapi.yaml` |
 | Exploratory / review | Postman collection (56 requests: happy path + one folder per AC), `make demo` | — | Same scenarios, readable request/response logs |
+| Static checks | golangci-lint ([.golangci.yml](../../.golangci.yml)), Redocly for the OpenAPI spec | — | Bug-finding linters only (errcheck, staticcheck, govet, unused, ineffassign, bodyclose, noctx, misspell) + gofmt/goimports; no style-only linters |
+| CI | GitHub Actions ([cc3-kvp.yml](../../../../.github/workflows/cc3-kvp.yml)) | 3 jobs | `lint` ∥ `test` (unit + integration on the runner's Docker) → `e2e` (whole stack, e2e + Postman) on every push |
 
 Rules that make tests reliable:
 

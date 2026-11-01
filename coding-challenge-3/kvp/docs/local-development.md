@@ -9,7 +9,7 @@ Tested on macOS (Apple Silicon) with Colima 0.x / Docker 29.5 / Compose 5.6 / Go
 ## 1. Install the tools (one time)
 
 ```bash
-brew install colima docker docker-compose docker-buildx lazydocker go jq grpcurl
+brew install colima docker docker-compose docker-buildx lazydocker go jq grpcurl golangci-lint
 ```
 
 | Tool | Why |
@@ -20,6 +20,7 @@ brew install colima docker docker-compose docker-buildx lazydocker go jq grpcurl
 | `lazydocker` | Terminal UI for containers, logs and stats |
 | `go` | Build and run tests on the host (Go ≥ 1.27) |
 | `jq` | Used by `make trace-ride` and `make demo` |
+| `golangci-lint` | `make lint` / `make fmt` (the same linter version runs in CI) |
 | `grpcurl` | Optional: call the gRPC API v2 from the terminal (`make grpc-offers`, `make grpc-location`) |
 
 Only to change the `.proto` files (generated code is committed): `brew install protobuf` and `go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12 google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1`, then `make proto`.
@@ -266,8 +267,12 @@ docker compose up -d --wait dispatch-service    # a few seconds later the ride i
 | `make test-e2e` | Black-box tests against the running stack through the gateway, including the 30 s offer timeout (~40 s) | `make up` first |
 | `make test-all` | `test-int` + `test-e2e` | both |
 | `make vet` | `go vet` for all build tags | Go |
+| `make lint` | golangci-lint ([.golangci.yml](../.golangci.yml)) + OpenAPI lint | golangci-lint, Node |
+| `make fmt` | Format Go code and fix import order | golangci-lint |
 
 Integration tests use the Docker engine in Colima. The Makefile sets `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock`, the socket path inside the Colima VM, which the Ryuk cleanup container needs. If you run `go test -tags integration` directly, export it yourself. Skip the 30 s timeout test with `go test -tags e2e -short ./test/e2e/`.
+
+The same commands run in CI on every push (GitHub Actions, [testing.md › Continuous integration](testing.md#continuous-integration)).
 
 Which test proves which requirement: [requirements-traceability.md](requirements-traceability.md); test strategy: [testing.md](testing.md).
 

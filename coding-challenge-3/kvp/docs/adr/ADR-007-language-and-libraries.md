@@ -83,6 +83,7 @@ The team chose Go (T2). This ADR records why Go fits the problem compared with o
 | IDs | `google/uuid` **v7** | v4 (random, poor index locality), ULID (`oklog/ulid`, same idea, non-standard), Snowflake (needs worker ids), `bigserial` (leaks volume, not globally unique). See [ADR-010](ADR-010-api-and-identifiers.md) |
 | Logging | `log/slog` | zap, zerolog, logrus ([ADR-005](ADR-005-observability.md)) |
 | Telemetry | OpenTelemetry Go SDK + `otelhttp`, `otelgrpc`, `redisotel`, `otelslog` | Vendor agents ([ADR-005](ADR-005-observability.md)) |
+| Lint | `golangci-lint` v2 ([.golangci.yml](../../.golangci.yml)): bug-finding linters + gofmt/goimports, same pinned version in CI | `staticcheck` alone, `revive`, `go vet` only |
 | Configuration | Environment variables (`svc.Env`, `svc.Duration`) | `spf13/viper`, `knadh/koanf`, `kelseyhightower/envconfig`: unnecessary for ~10 settings |
 | Dependency injection | Manual constructor wiring in each `cmd/main.go` (the Clean Architecture composition root, [ADR-012](ADR-012-clean-architecture.md)) | `google/wire`, `uber-go/fx`: unnecessary for 3 small services |
 | Testing | `testing` + `testcontainers-go`; `getkin/kin-openapi` (e2e only) validates REST responses against the OpenAPI spec | testify, ginkgo/gomega, mocks ([ADR-011](ADR-011-testing-strategy.md)); `pb33f/libopenapi-validator` |

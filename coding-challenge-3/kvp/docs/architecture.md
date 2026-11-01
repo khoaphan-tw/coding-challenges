@@ -449,8 +449,9 @@ Migrations are embedded in each service ([ride](../services/ride/internal/adapte
 ## 14. Repository layout
 
 ```
+.github/workflows/cc3-kvp.yml   CI at the repository root: lint ∥ test → e2e (see testing.md)
 coding-challenge-3/kvp/
-├── README.md · Makefile · docker-compose.yml · Dockerfile · go.mod
+├── README.md · Makefile · docker-compose.yml · Dockerfile · go.mod · .golangci.yml (lint rules)
 ├── api/                  openapi.yaml REST contract (v1) · proto/ gRPC contracts (v2) · gen/ generated Go code
 ├── deploy/                 nginx gateway · Postgres init (3 DBs) · Grafana dashboard
 ├── pkg/                    shared outer-ring code, no business rules
