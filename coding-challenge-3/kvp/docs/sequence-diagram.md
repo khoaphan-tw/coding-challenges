@@ -244,11 +244,11 @@ sequenceDiagram
     RS->>RS: [tx] ride REQUESTED + outbox RideRequested
     RS-->>P: 201 REQUESTED (the API does not depend on dispatch)
     RS-)K: relay publishes RideRequested
-    Note over K: message waits; the consumer-group offset is not advanced
+    Note over K: The message waits in the topic.<br/>The consumer-group offset is not advanced.
     Note over XS: dispatch-service restarts
     K-)XS: RideRequested (from the last committed offset)
     XS->>XS: [tx] inbox + saga STARTED + outbox StartMatching
-    Note over XS: …normal flow continues; any PENDING offer that expired<br/>while it was down is expired by the sweeper and rematched
+    Note over XS: The normal flow continues.<br/>A PENDING offer that expired while it was down<br/>is expired by the sweeper and rematched.
 ```
 
 | Crash point | State left behind | Recovery | Duplicate risk handled by |

@@ -243,7 +243,7 @@ Postgres row locking serialises the racers: the second `UPDATE` waits for the fi
 
 **Without it.** Two rides assigned one driver (AC-09 fails), or an offer both accepted and expired.
 
-**Trade-offs.** The guard lives in the database of the data's owner, so it cannot protect data spread across services; the saga (P1) handles that. Compared with ten alternatives (mutex, optimistic version, `SERIALIZABLE`, Redlock, etcd, actors, …) in [ADR-002](adr/ADR-002-concurrency.md).
+**Trade-offs.** The guard lives in the database of the data's owner, so it cannot protect data spread across services; the saga (P1) handles that. Why not a distributed lock: [ADR-002](adr/ADR-002-concurrency.md).
 
 **Proof.** `TestConcurrentReservationOnlyOneWins` (50 rounds of two goroutines on real Postgres, exactly one winner each time), `TestSecondReservationIsRejectedWithReply`, `TestAcceptRacingTimeoutHasOneWinner`, `TestOnlyTheOfferedDriverCanRespond`.
 
@@ -333,7 +333,7 @@ Each service has its own database user and runs its own embedded migrations at s
 
 **Without it.** Either geo queries on the hot reservation table, or a synchronous call to driver-service in every matching attempt.
 
-**Trade-offs.** The read model lags by milliseconds (eventual consistency). It is one more store to run and to rebuild after a loss. Compared with PostGIS, Tile38 and Elasticsearch in [ADR-001](adr/ADR-001-matching.md).
+**Trade-offs.** The read model lags by milliseconds (eventual consistency). It is one more store to run and to rebuild after a loss. Why not PostGIS: [ADR-001](adr/ADR-001-matching.md).
 
 **Proof.** `TestIndexKeepsOnlyLatestAvailableDrivers` (real Redis), `TestNearestDriverSelected`, `TestEquidistantPicksSmallestDriverID`, `TestExcludedDriverSkipped`.
 
@@ -377,7 +377,7 @@ Examples of ports: ride-service declares `RideRepository`, `IdempotencyStore`, `
 
 **Without it.** Business rules tied to SQL and HTTP; flows that can only be tested end to end.
 
-**Trade-offs.** About 15 ports across three services, each with one production implementation; more files to navigate. Compared with 3-layer, hexagonal, onion and vertical slices in [ADR-012](adr/ADR-012-clean-architecture.md).
+**Trade-offs.** About 15 ports across three services, each with one production implementation; more files to navigate. Why not 3-layer: [ADR-012](adr/ADR-012-clean-architecture.md).
 
 **Proof.** The 4 architecture tests; ride use-case tests with in-memory fakes run in milliseconds without Docker.
 
@@ -472,5 +472,3 @@ If the process crashes between steps 8 and 9, the relay publishes after restart.
 | Distributed lock (Redlock, etcd lease) | A conditional `UPDATE` in the owner's database is simpler and survives crashes | Locks over resources with no database |
 | Circuit breaker | Most calls are asynchronous; the one sync call (dispatch → driver for rebuild) is rare | More synchronous calls between services |
 | Change data capture (Debezium) instead of outbox polling | Extra infrastructure | High message rates, several relay replicas |
-| Backend for frontend (BFF) | One client type | Separate passenger and driver apps |
-| Batch / global assignment | Greedy nearest is what the challenge asks | Hot zones at scale ([scalability.md](scalability.md), S5) |

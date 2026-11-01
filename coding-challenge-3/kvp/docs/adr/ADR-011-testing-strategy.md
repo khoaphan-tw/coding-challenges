@@ -11,23 +11,12 @@ The riskiest code is not in Go functions; it is in the **interaction with Postgr
 
 ## Options compared
 
-| Option | What it proves | Speed | Realism | Verdict |
-|---|---|---|---|---|
-| **Pure unit tests** (state machines, matching, validation) | Business rules | ms | Rules only | ✅ Chosen: all rules extracted into pure functions |
-| **Use-case tests with in-memory fakes of the ports** | Application flows (idempotency, duplicate commands, replies) | ms | Flows, not SQL | ✅ Chosen: enabled by Clean Architecture ([ADR-012](ADR-012-clean-architecture.md)) |
-| **Architecture test** (`go list` dependency rules) | Layers depend inward; no infrastructure in inner rings | ~2 s | Structure | ✅ Chosen ([test/arch](../../test/arch/arch_test.go)) |
-| Generated mocks (`gomock`, `mockery`) / `sqlmock` | That code calls the mock as expected | ms | ❌ Cannot show that `WHERE status='AVAILABLE'` serialises two transactions | ❌ Hand-written fakes for flows; real Postgres for SQL |
-| In-memory fake repository | Logic with a fake store | ms | ❌ Fakes don't reproduce Postgres locking or isolation | ❌ |
-| **testcontainers-go** (real Postgres 18 / Redis 8 per test package) | SQL, locks, constraints, Lua, real concurrency | ~2–5 s per package | ✅ Same engines as production | ✅ Chosen for integration tests |
-| Shared docker-compose test environment | Same, shared across tests | Fast after start | ✅ | ❌ Tests interfere; manual lifecycle |
-| Embedded Postgres (`fergusstrange/embedded-postgres`) | Real Postgres binary, no Docker | ~1–2 s | ✅ for Postgres only | Viable; no Redis/Redpanda equivalent |
-| **Black-box e2e in Go against the running stack** | Whole system through the gateway, incl. Redpanda and timeouts | seconds | ✅ Highest | ✅ Chosen (`make test-e2e`) |
-| Postman / newman collection | Same flows, readable for reviewers, manual exploration | seconds | ✅ | ✅ Also provided ([postman/](../../postman/)) |
-| Load / race tools (k6, Gatling, vegeta) | Throughput, contention under load | minutes | ✅ | Future (not required) |
-| Contract tests (Pact) between services | Message/API contracts | fast | Partial | Future: one envelope, 3 services, e2e covers it today |
-| Property-based tests (`testing/quick`, `rapid`) | Invariants over random inputs | fast | Rules only | Future: e.g. "matching never picks an excluded driver" |
+| Option | Pros | Cons | Verdict |
+|---|---|---|---|
+| **Real Postgres/Redis in tests (testcontainers-go)** | Proves SQL, locks, constraints and Lua with the same engines as production | Needs Docker; ~2–5 s per package | ✅ **Chosen** for integration tests |
+| Mocks (`gomock`, `sqlmock`) | Fast, no Docker | Cannot show that `WHERE status='AVAILABLE'` serialises two transactions | ❌ For SQL. Hand-written fakes are still used for use-case flows |
 
-**Assertion style:** standard `testing` with `t.Fatalf`, plus table-driven tests. testify was considered; the standard library keeps tests dependency-free and is idiomatic Go. Ginkgo/Gomega (BDD style) adds a DSL the team does not need.
+The rest of the strategy needs no comparison: pure unit tests for rules, use-case tests with in-memory fakes of the ports, an architecture test for the dependency rule, black-box e2e tests against the running stack, and a Postman collection for reviewers. Assertions use the standard `testing` package with table-driven tests.
 
 ## Decision
 
@@ -49,9 +38,8 @@ Rules that make tests reliable:
 ## Consequences
 
 * ✅ AC-09 is proven against the real database, not a mock.
-* ✅ The unit tests run in under a second without Docker.
-* ⚠️ Integration tests need a container engine (Colima) and ~10–20 s per run.
-* ⚠️ No TDD history: tests were written alongside the code, not before. The root README's TDD bonus (+5) does not apply.
+* ✅ The unit tests run in under a second without Docker; CI runs every level on each push.
+* ⚠️ Integration tests need a container engine (Colima locally) and ~15 s per run.
 
 ## When to revisit
 

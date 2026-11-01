@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-Every ADR uses the same template: **context → decision drivers → comparison with alternative approaches, technologies and products → decision → consequences → when to revisit.**
+Every ADR uses the same template: **context → the choice compared with one or two common alternatives (or simply why, when no comparison is needed) → decision → consequences → when to revisit.**
 
 | ADR | Decision | Chosen | Covers |
 |---|---|---|---|

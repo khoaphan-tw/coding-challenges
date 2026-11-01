@@ -9,7 +9,7 @@ Built for [Coding Challenge #3](../coding-challenge-3.md) as **three Go microser
 | **Requirements** | All 10 acceptance criteria and every §5 evaluation item are met and traced to code and tests → [requirements traceability](docs/requirements-traceability.md) |
 | **Quality** | golangci-lint + OpenAPI lint clean; GitHub Actions CI runs lint → tests → full-stack e2e on every push → [CI](#3-how-to-test) |
 | **Tests** | 32 unit + architecture, 23 integration (real Postgres/Redis), 12 end-to-end (REST + gRPC + OpenAPI contract), 56 Postman requests / 115 checks, all green → [testing](docs/testing.md) |
-| **Design** | C4 architecture, 8 sequence flows, 14 design patterns explained, 12 ADRs that each compare alternatives → [documentation](#6-documentation) |
+| **Design** | C4 architecture, 8 sequence flows, 14 design patterns explained, 12 ADRs that explain each choice → [documentation](#6-documentation) |
 | **Run it** | `make up && make demo` |
 
 ## Contents
@@ -35,6 +35,7 @@ Built for [Coding Challenge #3](../coding-challenge-3.md) as **three Go microser
 * [6. Documentation](#6-documentation)
   * [6.1 Reading paths](#61-reading-paths)
   * [6.2 All documents](#62-all-documents)
+* [7. 🏆 Bonus: What We Added Beyond the Requirements](#7--bonus-what-we-added-beyond-the-requirements)
 
 ---
 
@@ -229,7 +230,7 @@ Full layout: [architecture §14](docs/architecture.md#14-repository-layout).
 2. `GEOSEARCH … BYRADIUS … ASC` returns candidates. The pure function `SelectNearest` drops excluded and non-available drivers, computes **Haversine** distance, cuts at the radius and sorts by `(distance, driverId)`.
 3. Redis only suggests. The pick is confirmed by driver-service's atomic reservation, so a stale index costs a retry, never a wrong assignment.
 
-Alternatives (PostGIS, Tile38, Elasticsearch, batch assignment, ETA routing): [ADR-001](docs/adr/ADR-001-matching.md).
+Why Redis GEO rather than PostGIS, and greedy rather than batch matching: [ADR-001](docs/adr/ADR-001-matching.md).
 
 ### 4.6 Concurrency strategy
 
@@ -249,7 +250,7 @@ Postgres row locking serialises the racers. The loser gets `DriverReservationFai
 * ride transitions: `SELECT … FOR UPDATE`, then the state machine
 * lock order is always saga → offer, so there are no deadlocks
 
-Defence in depth: partial unique indexes (at most one `PENDING` offer per driver and per ride) and a `CHECK` on drivers. Ten alternatives compared (mutex, optimistic version, SERIALIZABLE, Redlock, etcd, actors, …): [ADR-002](docs/adr/ADR-002-concurrency.md).
+Defence in depth: partial unique indexes (at most one `PENDING` offer per driver and per ride) and a `CHECK` on drivers. Why not a distributed lock: [ADR-002](docs/adr/ADR-002-concurrency.md).
 
 ### 4.7 Idempotency strategy
 
@@ -304,12 +305,12 @@ Plus B4–B6, S3/S4/S6, T4/T5, the 1k → 100k → 1M evolution and the seven to
 
 ### 5.1 Why this tech stack?
 
-| Area | Chosen | Why (short) | Alternatives compared in |
+| Area | Chosen | Why (short) | Details |
 |---|---|---|---|
-| Language | Go 1.27, standard library first | ~20 MB images, millisecond start-up, goroutines for consumer loops and workers, explicit code | [ADR-007](docs/adr/ADR-007-language-and-libraries.md) (vs Java/Spring, Kotlin, .NET, Node, Python, Rust; Gin/Echo/Fiber; GORM/sqlc) |
+| Language | Go 1.27, standard library first | ~20 MB images, millisecond start-up, goroutines for consumer loops and workers, explicit code | [ADR-007](docs/adr/ADR-007-language-and-libraries.md) |
 | Architecture | 3 microservices, DB per service | Team goal; split by how parts scale | [ADR-006](docs/adr/ADR-006-service-architecture.md) |
 | Code structure | Clean Architecture, enforced by a test | Flows testable with fakes; atomic SQL in one adapter | [ADR-012](docs/adr/ADR-012-clean-architecture.md) |
-| Consistency | Orchestrated saga, hand-rolled | Loop + timer + compensations need one owner; no workflow server | [ADR-003](docs/adr/ADR-003-saga-orchestration.md) (vs 2PC, choreography, Temporal, Camunda, …) |
+| Consistency | Orchestrated saga, hand-rolled | Loop + timer + compensations need one owner; no workflow server | [ADR-003](docs/adr/ADR-003-saga-orchestration.md) |
 | Messaging | Outbox + inbox, at-least-once | No lost or phantom events, no extra infrastructure | [ADR-004](docs/adr/ADR-004-messaging-outbox-inbox.md) |
 | Broker | Redpanda | Kafka API in one light container | [ADR-009](docs/adr/ADR-009-message-broker.md) |
 | Data | PostgreSQL 18 + Redis 8 | Conditional updates, `SKIP LOCKED`, partial unique indexes; in-memory geo search | [ADR-008](docs/adr/ADR-008-data-stores.md), [ADR-001](docs/adr/ADR-001-matching.md) |
@@ -379,5 +380,24 @@ All detailed documents are in [docs/](docs/). The challenge requires [architectu
 | [scalability.md](docs/scalability.md) | How does it grow from 1k to 1M drivers? (load model, evolution, the 7 topics, 6 bottlenecks, 6 strategies, 5 trade-offs) |
 | [observability.md](docs/observability.md) | What happened to ride R001? (log format, trace-by-id, one trace per ride, dashboard, alerts) |
 | [local-development.md](docs/local-development.md) | How do I install, run, demo and test it on a Mac with Colima? (incl. Postman, config, troubleshooting) |
-| [adr/](docs/adr/README.md) | Why each decision, compared with the alternatives (12 ADRs) |
+| [adr/](docs/adr/README.md) | Why each decision was made (12 ADRs) |
 | [api/openapi.yaml](api/openapi.yaml), [api/proto](api/proto/) | What exactly does each endpoint accept and return? (REST contract, browsable at http://localhost:8080/docs/; gRPC v2 contracts) |
+
+---
+
+## 7. 🏆 Bonus: What We Added Beyond the Requirements
+
+A summary of the work that goes beyond the acceptance criteria, for the Creative Bonus.
+
+| # | What we did | Short description | Details |
+|---|---|---|---|
+| 1 | **Go, with gRPC included** | A modern, lightweight language: ~20 MB images, millisecond start-up, goroutines for every consumer loop and worker. Next to REST, two driver-app APIs are also **gRPC streams** (location updates and pushed offers) | [ADR-007](docs/adr/ADR-007-language-and-libraries.md), [ADR-010 Part 6](docs/adr/ADR-010-api-and-identifiers.md#part-6-grpc-api-v2-for-two-driver-app-apis) |
+| 2 | **Redpanda instead of Kafka** | The same Kafka API and client code, in one light binary with no JVM or ZooKeeper; starts in seconds on a laptop, with `rpk` and Redpanda Console for inspecting topics | [ADR-009](docs/adr/ADR-009-message-broker.md) |
+| 3 | **Redis GEOSEARCH for matching** | Nearest available drivers found in memory in under a millisecond. A versioned Lua script keeps only the latest location, and the index can be rebuilt at any time | [ADR-001](docs/adr/ADR-001-matching.md), [patterns P10](docs/patterns.md#p10-cqrs-style-read-model-geo-projection) |
+| 4 | **Microservices** | Three services split by domain (ride, driver, dispatch), each with its own database, behind one gateway for REST and gRPC | [ADR-006](docs/adr/ADR-006-service-architecture.md), [architecture](docs/architecture.md) |
+| 5 | **Saga pattern** | An orchestrated saga drives each ride across the three services: compensations before the driver accepts, retries after. Timeouts, retries and crash recovery are built in | [ADR-003](docs/adr/ADR-003-saga-orchestration.md), [patterns P1](docs/patterns.md#p1-saga-orchestration-with-compensations-and-a-pivot) |
+| 6 | **Concurrency control with database locks** | One atomic `UPDATE … WHERE status='AVAILABLE'` decides every race, backed by row locks and partial unique indexes. Proven by a 50-round race test on real Postgres | [ADR-002](docs/adr/ADR-002-concurrency.md), [patterns P6](docs/patterns.md#p6-compare-and-set-in-sql) |
+| 7 | **Partitioning to keep messages in order** | Topics are keyed by `rideId` / `driverId`, so all messages about one ride or driver land on the same partition, in order, while services scale out by partition. The transactional outbox keeps publish order and the inbox removes duplicates | [ADR-004](docs/adr/ADR-004-messaging-outbox-inbox.md), [architecture §9](docs/architecture.md#9-messaging-topics-message-catalogue-envelope) |
+| 8 | **Automated tests at every level** | Unit, architecture rules, integration on real Postgres/Redis (testcontainers), end-to-end through the gateway (REST, gRPC and an OpenAPI contract test), and a Postman collection | [testing](docs/testing.md), [requirements traceability](docs/requirements-traceability.md) |
+| 9 | **CI pipeline** | GitHub Actions on every push: lint (golangci-lint + OpenAPI) and tests in parallel, then the whole stack in Docker for e2e and Postman | [testing › CI](docs/testing.md#continuous-integration), [cc3-kvp.yml](../../.github/workflows/cc3-kvp.yml) |
+| 10 | **Detailed documentation** | C4 architecture, 8 sequence diagrams, 14 design patterns, 12 ADRs, every requirement traced to code and tests, an OpenAPI spec with Swagger UI, and a local setup guide | [6. Documentation](#6-documentation) |

@@ -1,6 +1,6 @@
 # Architecture
 
-How the Ride-Hailing Dispatch Service is built: from the system context down to the code. Every choice links to an ADR that compares it with the alternatives. Every requirement is traced to code and tests in [requirements-traceability.md](requirements-traceability.md).
+How the Ride-Hailing Dispatch Service is built: from the system context down to the code. Every choice links to an ADR that explains why it was chosen. Every requirement is traced to code and tests in [requirements-traceability.md](requirements-traceability.md).
 
 **Contents:**
 1. [Goals and constraints](#1-goals-and-constraints)
@@ -100,7 +100,7 @@ flowchart LR
 | Redpanda 26 | Kafka API | Commands, replies, events; per-key ordering, replay | AC-10 |
 | Grafana LGTM | OTel Collector, Loki, Tempo, Prometheus | Logs, traces, metrics | Observability |
 
-**Why three services and not a monolith?** This is a team learning goal (T1). The split follows aggregates that change and scale differently: rides (low write rate), drivers (location: up to 250k writes/s at 1M drivers) and dispatch (coordination). A modular monolith would be enough at 1,000 drivers. [ADR-006](adr/ADR-006-service-architecture.md) compares the options honestly.
+**Why three services and not a monolith?** This is a team learning goal (T1). The split follows aggregates that change and scale differently: rides (low write rate), drivers (location: up to 250k writes/s at 1M drivers) and dispatch (coordination). A modular monolith would be enough at 1,000 drivers. More in [ADR-006](adr/ADR-006-service-architecture.md).
 
 **Data ownership:** each service writes only its own database, and services never read each other's tables. The only synchronous internal call is dispatch-service → `GET /internal/drivers`, used to rebuild the GEO index.
 
@@ -431,20 +431,20 @@ Migrations are embedded in each service ([ride](../services/ride/internal/adapte
 
 ## 13. Decisions at a glance
 
-| # | Decision | Chosen | Alternatives compared | ADR |
+| # | Decision | Chosen | Main alternative | ADR |
 |---|---|---|---|---|
-| 1 | Matching | Greedy nearest, Haversine in Go, Redis GEO projection | Batch/Hungarian, ETA routing; PostGIS, Tile38, Elasticsearch, MongoDB, H3/S2 | [001](adr/ADR-001-matching.md) |
-| 2 | Concurrency | Atomic conditional updates + row locks + partial unique indexes | Mutex, optimistic version, SERIALIZABLE, advisory locks, Redlock, etcd, actors | [002](adr/ADR-002-concurrency.md) |
-| 3 | Cross-service consistency | Orchestrated saga, hand-rolled | 2PC, event sourcing, choreography; Temporal, Camunda, Step Functions, Dapr, Axon | [003](adr/ADR-003-saga-orchestration.md) |
-| 4 | Reliable messaging | Outbox (polling) + inbox, at-least-once | Dual write, Kafka transactions, Debezium/Redpanda Connect CDC, Watermill | [004](adr/ADR-004-messaging-outbox-inbox.md) |
-| 5 | Observability | OpenTelemetry → Grafana LGTM, slog text logs, one trace per ride | Vendor agents, ELK, Jaeger+Prometheus, SigNoz, SaaS; zap/zerolog | [005](adr/ADR-005-observability.md) |
-| 6 | Architecture style | 3 microservices by aggregate, DB per service | Monolith, modular monolith, serverless, actors, cells | [006](adr/ADR-006-service-architecture.md) |
-| 7 | Language and libraries | Go 1.27, `net/http`, pgx, franz-go, go-redis | Java/Spring, Kotlin, .NET, Node, Python, Rust; Gin/Echo/Fiber; GORM/sqlc; sarama | [007](adr/ADR-007-language-and-libraries.md) |
-| 8 | Data stores | PostgreSQL 18, Redis 8 | MySQL, MongoDB, CockroachDB, DynamoDB, Cassandra; Valkey, Dragonfly | [008](adr/ADR-008-data-stores.md) |
-| 9 | Broker | Redpanda | Kafka, RabbitMQ, NATS JetStream, Redis Streams, Pulsar, SQS | [009](adr/ADR-009-message-broker.md) |
-| 10 | API and ids | REST + problem+json (v1), gRPC streams for location and offers (v2), Idempotency-Key in Postgres, UUIDv7 | gRPC-only, GraphQL, Connect-RPC; Redis keys; UUIDv4, ULID, Snowflake; WebSocket/SSE/MQTT | [010](adr/ADR-010-api-and-identifiers.md) |
-| 11 | Testing | Unit + fakes + testcontainers + e2e + Postman + architecture test | Mocks, in-memory fakes, embedded Postgres, k6, Pact | [011](adr/ADR-011-testing-strategy.md) |
-| 12 | Code structure | Clean Architecture per service | Single package, functional core + shell, 3-layer, hexagonal, onion, vertical slice | [012](adr/ADR-012-clean-architecture.md) |
+| 1 | Matching | Greedy nearest, Haversine in Go, Redis GEO projection | PostGIS | [001](adr/ADR-001-matching.md) |
+| 2 | Concurrency | Atomic conditional updates + row locks + partial unique indexes | Distributed lock (Redlock) | [002](adr/ADR-002-concurrency.md) |
+| 3 | Cross-service consistency | Orchestrated saga, hand-rolled | Choreography; Temporal | [003](adr/ADR-003-saga-orchestration.md) |
+| 4 | Reliable messaging | Outbox (polling) + inbox, at-least-once | CDC (Debezium) | [004](adr/ADR-004-messaging-outbox-inbox.md) |
+| 5 | Observability | OpenTelemetry → Grafana LGTM, slog text logs, one trace per ride | ELK | [005](adr/ADR-005-observability.md) |
+| 6 | Architecture style | 3 microservices by aggregate, DB per service | Modular monolith | [006](adr/ADR-006-service-architecture.md) |
+| 7 | Language and libraries | Go 1.27, `net/http`, pgx, franz-go, go-redis | Java + Spring Boot | [007](adr/ADR-007-language-and-libraries.md) |
+| 8 | Data stores | PostgreSQL 18, Redis 8 | MySQL | [008](adr/ADR-008-data-stores.md) |
+| 9 | Broker | Redpanda | Apache Kafka | [009](adr/ADR-009-message-broker.md) |
+| 10 | API and ids | REST + problem+json (v1), gRPC streams for location and offers (v2), Idempotency-Key in Postgres, UUIDv7 | WebSocket; UUIDv4 | [010](adr/ADR-010-api-and-identifiers.md) |
+| 11 | Testing | Unit + fakes + testcontainers + e2e + Postman + architecture test | Mocks | [011](adr/ADR-011-testing-strategy.md) |
+| 12 | Code structure | Clean Architecture per service | 3-layer | [012](adr/ADR-012-clean-architecture.md) |
 
 ## 14. Repository layout
 

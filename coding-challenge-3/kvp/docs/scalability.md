@@ -9,8 +9,7 @@ How the design evolves from **1,000 → 100,000 → 1,000,000 drivers** (challen
 4. [Bottlenecks](#4-bottlenecks)
 5. [Scaling strategies](#5-scaling-strategies)
 6. [Architectural trade-offs](#6-architectural-trade-offs)
-7. [Signals that say "evolve now"](#7-signals-that-say-evolve-now)
-8. [What is not measured](#8-what-is-not-measured)
+7. [What is not measured](#7-what-is-not-measured)
 
 Requirement check: at least 3 bottlenecks, 3 strategies and 2 trade-offs are required; this page has **6 (B1–B6), 6 (S1–S6) and 5 (T1–T5)**.
 
@@ -92,17 +91,6 @@ The topics are the ones challenge §5 asks about.
 | **T4** | At-least-once + idempotent consumers | "Exactly-once" (Kafka transactions / 2PC) | Simple, broker-agnostic, crash-safe | Inbox/outbox tables and cleanup | Never: the DB write is outside Kafka anyway ([ADR-004](adr/ADR-004-messaging-outbox-inbox.md)) |
 | **T5** | Location in Postgres per update (stage 1) | Stream-only location | Auditable, simple, one source of truth | Write amplification (B1) | ~50k drivers (S1) |
 
-## 7. Signals that say "evolve now"
+## 7. What is not measured
 
-| Metric (all on the Grafana dashboard or derivable) | Threshold | Next step |
-|---|---|---|
-| `driver_db` write latency p99 / CPU | > 50 ms / > 70 % | S1 |
-| Redis CPU, `GEOSEARCH` p99 | > 60 %, > 5 ms | S2 |
-| `driver_reservation_conflicts_total / offers_total` per area | > 20 % | S2 area ownership, then S5 |
-| `outbox_unpublished` | growing for > 1 min | S4 (CDC) |
-| Consumer lag (`messages_consumed_total` vs produced) | growing for > 1 min | S3 (partitions + replicas) |
-| `dispatch_match_duration_seconds` p95 | > 2 s | Check Redis (S2), then lag (S3) |
-
-## 8. What is not measured
-
-Honest note: we did **not** run load tests. The per-node limits above (Postgres ~10–20k simple writes/s, Redis ~100k+ ops/s per core) are typical published orders of magnitude, not measurements of this system. The next step would be k6 scenarios for location ingestion and hot-zone contention ([ADR-011](adr/ADR-011-testing-strategy.md)).
+We did **not** run load tests. The per-node limits above (Postgres ~10–20k simple writes/s, Redis ~100k+ ops/s per core) are typical published orders of magnitude, not measurements of this system. The next step would be k6 scenarios for location ingestion and hot-zone contention ([ADR-011](adr/ADR-011-testing-strategy.md)).

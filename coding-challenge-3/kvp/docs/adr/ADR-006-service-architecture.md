@@ -7,35 +7,20 @@
 
 ## Context
 
-The challenge accepts a modular monolith and timeboxes the work to 4–6 hours. The root README warns against "over-engineering beyond scope". The team still chose **microservices + saga** as a deliberate learning goal. This ADR records why that is defensible, what it costs, and how small we kept it.
-
-## Decision drivers
-
-* Learning goal: practise sagas, idempotent messaging and distributed tracing for real.
-* Boundaries should follow the domain, not the technical layers.
-* Keep the number of moving parts as low as the goal allows.
-* Every AC must still be met; scoring rewards ACs over architecture.
+The challenge accepts a modular monolith and timeboxes the work to 4–6 hours. The team still chose **microservices + saga** as a deliberate learning goal (T1). This ADR records why that is defensible and how small we kept it.
 
 ## Part 1: architecture style
 
-| Option | Consistency | Ops cost | Independent scaling | Learning value for this challenge | Fit with 4–6 h | Verdict |
-|---|---|---|---|---|---|---|
-| Layered monolith (controllers/services/repos) | One transaction | Lowest | None | Low | Best | ❌ Boundaries not visible |
-| **Modular monolith** (modules per bounded context, in-process bus, one DB with schemas per module) | One transaction (or outbox per module) | Low | None (scale the whole app) | Medium | Best | The recommended default; documented alternative |
-| **Microservices (3 services, DB per service, broker)** | Eventual between services (saga) | Medium–high (broker, 3 DBs, tracing) | Per service | **High** (team goal T1) | Over the timebox | ✅ **Chosen** |
-| Serverless / FaaS (AWS Lambda, Cloud Functions, Knative) | Eventual | Low ops, but not locally runnable as-is | Per function | Medium | Medium | ❌ Must run offline in Docker; cold starts; vendor coupling |
-| Actor model (Akka/Pekko, Orleans, Proto.Actor; a grain per driver/ride) | Single writer per actor | Medium (cluster membership) | Per actor | High, but a different paradigm | Poor | ❌ Elegant for "one driver, one offer", but unfamiliar to the team; Go actor frameworks are niche |
-| Cell-based (cell per city, each a full stack) | Per cell | High | Per cell | — | Poor | Future scale pattern ([scalability](../scalability.md)) |
+| Option | Pros | Cons | Verdict |
+|---|---|---|---|
+| **Microservices (3 services, database per service, broker)** | Independent scaling per service; practises sagas, idempotent messaging and distributed tracing (team goal T1) | Eventual consistency between services; more infrastructure | ✅ **Chosen** |
+| Modular monolith (modules per bounded context, one database) | One transaction; simplest to run; enough for 1,000 drivers | No independent scaling; does not meet T1 | The recommended default without T1 |
 
-**Honest assessment:** for 1,000 drivers, a modular monolith is simpler, immediately consistent and enough. Microservices pay off when the parts scale or change independently. Here that is real for the location-heavy driver path (25k–250k updates/s at 100k–1M drivers), but not at the size the challenge implements. We accept the cost to meet T1 and limit the damage with only **three** services, one shared bootstrap package, and one Compose file.
+For 1,000 drivers a modular monolith would be enough. Microservices pay off when parts scale differently, which is real for the location-heavy driver path at 100k+ drivers. We keep the cost low with only **three** services, one shared bootstrap package and one Compose file.
 
-## Part 2: where to cut (granularity)
+## Part 2: where to cut
 
-| Option | Services | Pros | Cons | Verdict |
-|---|---|---|---|---|
-| 2 services: ride+dispatch, driver | Fewer hops | Dispatch logic mixed with the ride lifecycle; can't scale matching separately | ❌ |
-| **3 services: ride, driver, dispatch** | Each owns one aggregate family with a different change rate | Ride lifecycle, driver availability and location, and matching/offers each have one owner; maps to the challenge's components | ✅ **Chosen** |
-| 5+ services: + location-service, offer-service, notification-service, passenger-service | Finest | Location could scale alone | Chatty; more sagas; more infra than the timebox allows | ❌ For now; location-service is the first split at scale (S1) |
+**Three services, one per aggregate family.** Each part changes and scales at a different rate, and the split maps directly to the challenge's components:
 
 | Service | Owns | Why separate |
 |---|---|---|
@@ -45,11 +30,7 @@ The challenge accepts a modular monolith and timeboxes the work to 4–6 hours. 
 
 ## Part 3: data ownership and integration
 
-| Option | Pros | Cons | Verdict |
-|---|---|---|---|
-| Shared database, all services read/write all tables | Easy joins | Hidden coupling; one schema change breaks three services; no clear owner | ❌ |
-| **Database per service** (3 databases, 3 users, one Postgres server locally) | Clear ownership; services can move to separate clusters later | No cross-service joins; data duplicated as projections (GEO index) | ✅ **Chosen** |
-| Schema per service in one database | Cheaper | Easy to cheat with cross-schema queries | ❌ (database-level users enforce the boundary) |
+**Database per service** (3 databases and 3 users on one Postgres server locally). Each service writes only its own data, and database users enforce the boundary, so a service can move to its own cluster later without code changes.
 
 Integration is **asynchronous only** between services (commands, replies and events on Redpanda, [ADR-004](ADR-004-messaging-outbox-inbox.md)). The one synchronous internal call is dispatch-service's `GET /internal/drivers`, used to rebuild the GEO index on startup.
 
@@ -59,11 +40,9 @@ Clients reach services through one **API gateway** (nginx, [deploy/nginx.conf](.
 
 * ✅ Demonstrates the patterns the team wanted: saga, outbox/inbox, idempotent consumers, tracing across services.
 * ✅ The driver/location path can scale independently (the main scaling need, [scalability](../scalability.md)).
-* ⚠️ Eventual consistency between ride, driver and offer (milliseconds); the API documents it.
-* ⚠️ More infrastructure (broker, tracing, three schemas), so local start-up takes ~30 s and needs ~4–6 GB RAM.
-* ⚠️ Well over the 4–6 h timebox; the root README's "over-engineering" warning applies, and this ADR is our justification.
+* ⚠️ Well over the 4–6 h timebox, with more infrastructure to run (broker, tracing, three databases).
 
 ## When to revisit
 
-* If the system stays small (< ~10–50k drivers) and one team owns it: **fold back into a modular monolith**. The `internal/` packages already are the modules; the saga would become a local transaction plus an in-process event bus.
+* If the system stays small (< ~10–50k drivers): fold back into a modular monolith. The `internal/` packages already are the modules.
 * At 100k+ drivers: split **location ingestion** into its own service first (S1).

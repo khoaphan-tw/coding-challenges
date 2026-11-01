@@ -10,29 +10,14 @@ ADR-006 decides how the **system** is split (3 services). This ADR decides how t
 
 The first version used a pure domain package plus one `app` package that mixed HTTP handlers, Kafka handlers and SQL. It was small and fast to write, but the business flow (e.g. the saga) could only be tested with a real database, and nothing stopped HTTP or SQL concerns from leaking into business logic.
 
-## Decision drivers
-
-* Business rules and use cases testable **without** Postgres, Redis or Redpanda.
-* The correctness-critical SQL (atomic conditional updates, `FOR UPDATE`, outbox in the same transaction; [ADR-002](ADR-002-concurrency.md), [ADR-004](ADR-004-messaging-outbox-inbox.md)) must stay explicit and in one place.
-* One obvious place for each kind of code: a reviewer should find "where is the rule?" and "where is the SQL?" immediately.
-* Not over-engineered for services of a few hundred lines each.
-
 ## Options compared
 
-| Structure | Idea | Business logic testable without DB? | Where does the transaction live? | Ceremony | Verdict |
-|---|---|---|---|---|---|
-| Single package per service | Handlers + SQL + rules together | ❌ | Anywhere | None | ❌ Rules buried in handlers |
-| **Functional core + imperative shell** (previous version) | Pure domain package; one "app" package with HTTP + messaging + SQL | Rules ✅, flows ❌ | In the app package | Low | Superseded: flows (saga) needed a DB to test |
-| 3-layer (controller → service → repository) | Layers by technical role; dependencies point **down** to data access | Only with mocks of concrete repositories | Usually leaks: the service needs `*sql.Tx` or the repository owns it | Low | ❌ The domain depends on persistence; transactions spanning several repositories get awkward |
-| Hexagonal (ports & adapters) | Application core with ports; adapters on both sides | ✅ with fake adapters | Core asks a port for a unit of work | Medium | Very close: Clean Architecture below *is* hexagonal with explicit inner rings |
-| Onion | Concentric rings: domain model → domain services → application → infrastructure | ✅ | Application ring | Medium | Equivalent to Clean; naming differs |
-| **Clean Architecture** (entities → use cases → interface adapters → frameworks and drivers) | Dependency rule: source code depends only inward; use cases own their ports | ✅ with fakes; ✅ with real adapters in integration tests | **Port `TxManager.WithinTx(ctx, fn)`**; repositories join the transaction from `ctx` | Medium | ✅ **Chosen** |
-| Vertical slice | One folder per feature (request → handler → DB) | Per slice | Per slice | Low | ❌ Good for CRUD-heavy apps; our services have one cohesive aggregate each |
-| DDD tactical + CQRS + event sourcing | Aggregates, command/query split, event store | ✅ | Event store | High | ❌ Too heavy ([ADR-003](ADR-003-saga-orchestration.md)); we only keep a CQRS-style read model for GEO |
+| Option | Pros | Cons | Verdict |
+|---|---|---|---|
+| **Clean Architecture** (domain → use cases + ports → adapters) | Use cases testable with fakes; SQL stays in one adapter; the dependency rule can be tested; transactions cross layers through a `TxManager` port | More files and interfaces | ✅ **Chosen** |
+| 3-layer (controller → service → repository) | Familiar; less ceremony | Business code depends on persistence: either `*pgx.Tx` is passed around, or each repository opens its own transaction and the "lock → decide → write state + history + outbox" invariant breaks | ❌ |
 
-**Why Clean Architecture over plain hexagonal?** In practice they are the same here. We use Clean's explicit **domain** and **use case** rings because the domain (state machines, matching) is substantial and pure, while the use cases (saga orchestration, idempotent command handling) are the application logic. Naming the rings makes the dependency rule testable ([test/arch](../../test/arch/arch_test.go)).
-
-**Why not 3-layer?** Our key invariant is "lock row → decide → write state + history + outbox in one transaction". In 3-layer, either the service passes `*pgx.Tx` around (the database leaks into business code) or each repository opens its own transaction (the invariant breaks). Clean Architecture's transaction port keeps the invariant without either problem.
+Hexagonal (ports & adapters) is essentially the same idea; Clean Architecture's named **domain** and **use case** rings make the dependency rule testable ([test/arch](../../test/arch/arch_test.go)).
 
 ## Decision
 
@@ -103,11 +88,9 @@ err := u.Tx.WithinTx(ctx, func(ctx context.Context) error {
 
 ## Consequences
 
-* ✅ Use cases are unit-testable with in-memory fakes (e.g. [ride usecase tests](../../services/ride/internal/usecase/rides_test.go): create, idempotency, duplicate commands, rejection reply, in ms with no Docker).
-* ✅ Concurrency and SQL behaviour are still proven against real Postgres, now at the adapter or use-case level (integration tests wire the real adapters exactly like `cmd/main.go`).
-* ✅ Swapping a technology means writing an adapter. Examples: Redis → Valkey, or PostGIS for `CandidateSource`, or Temporal for the saga, would touch `adapter/` and `cmd/` only.
-* ⚠️ More files and interfaces (~15 ports across 3 services). Each port has exactly one production implementation, and the fakes exist for tests.
-* ⚠️ The transaction travels in `context.Context` (implicit). It is guarded by `pgutil.Tx(ctx)` erroring when there is none, and it is a widely used Go pattern, but it is less explicit than passing a `Tx` parameter.
+* ✅ Use cases are unit-testable with in-memory fakes (e.g. [ride usecase tests](../../services/ride/internal/usecase/rides_test.go), in ms with no Docker).
+* ✅ Swapping a technology means writing an adapter (e.g. Redis → Valkey, or a gRPC API next to REST) without touching use cases.
+* ⚠️ The transaction travels implicitly in `context.Context`, guarded by `pgutil.Tx(ctx)` returning an error when there is none.
 
 ## When to revisit
 

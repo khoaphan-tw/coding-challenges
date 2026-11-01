@@ -135,7 +135,7 @@ Every requirement of [Coding Challenge #3](../../coding-challenge-3.md) is mappe
 | Prevents one driver holding two offers/rides | **Atomic `UPDATE drivers … WHERE status='AVAILABLE'`** (row lock); defence in depth: partial unique indexes on pending offers; `CHECK` on drivers | `ReserveIfAvailable` ([adapter/postgres](../services/driver/internal/adapter/postgres/postgres.go)), [dispatch migration](../services/dispatch/internal/adapter/postgres/migrations/001_dispatch.sql) | I-driver **`TestConcurrentReservationOnlyOneWins`** (50 rounds, 2 goroutines behind a barrier, real Postgres) |
 | Only one ride creates the offer; the other stays `MATCHING` or tries another driver | Loser gets `DriverReservationFailed` → round skip → next candidate or `WAITING_FOR_DRIVER` | saga `HandleReply` | I-driver `TestSecondReservationIsRejectedWithReply`; I-saga **`TestTwoRidesCannotOfferTheSameDriver`**; E **`TestConcurrentRidesCannotShareADriver`** (parallel HTTP; the loser gets the driver after the winner cancels); P-09; `make demo` step 9 |
 | Related race: accept vs timeout | One conditional update on the offer wins | `RespondPending`, `ExpireIfDue` | I-saga `TestAcceptRacingTimeoutHasOneWinner` (20 rounds) |
-| Strategy documented | — | — | [ADR-002](adr/ADR-002-concurrency.md) (compares 10 approaches) |
+| Strategy documented | — | — | [ADR-002](adr/ADR-002-concurrency.md) (conditional updates vs a distributed lock) |
 
 ### AC-10: Event-Driven Dispatch
 
@@ -177,7 +177,7 @@ The test strategy (levels, invariants, how to run) is in [testing.md](testing.md
 | Requirement | Where |
 |---|---|
 | System architecture diagram | [architecture §2–§4](architecture.md#2-system-context-c4-level-1) (C4 context, containers, components), README diagram |
-| Reasoning explained | [architecture §1, §3, §13](architecture.md#13-decisions-at-a-glance) + 12 ADRs, each comparing alternatives |
+| Reasoning explained | [architecture §1, §3, §13](architecture.md#13-decisions-at-a-glance) + 12 ADRs explaining each choice |
 
 ### Scalability & Performance Design
 
