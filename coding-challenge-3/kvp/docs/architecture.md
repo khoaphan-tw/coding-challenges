@@ -463,7 +463,7 @@ coding-challenge-3/kvp/
 │   └── internal/{domain, usecase, adapter/…}
 ├── test/arch/              architecture (dependency rule) tests
 ├── test/e2e/               black-box tests against the running stack
-├── postman/                Postman collection (12 scenario folders)
+├── postman/                Postman collection (happy path + one folder per AC)
 ├── scripts/                demo · trace-ride · trace-logs · replay-dlq · gen-postman
 └── docs/                   this documentation
 ```

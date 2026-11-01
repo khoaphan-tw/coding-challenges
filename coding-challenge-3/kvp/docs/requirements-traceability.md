@@ -26,7 +26,7 @@ Every requirement of [Coding Challenge #3](../../coding-challenge-3.md) is mappe
 | **I-saga** | integration (real Postgres): saga orchestrator | [services/dispatch/internal/usecase/orchestrator_integration_test.go](../services/dispatch/internal/usecase/orchestrator_integration_test.go) |
 | **I-geo** | integration (real Redis): GEO index | [services/dispatch/internal/adapter/redis/redis_integration_test.go](../services/dispatch/internal/adapter/redis/redis_integration_test.go) |
 | **E** | end-to-end through the gateway against `make up` | [test/e2e/e2e_test.go](../test/e2e/e2e_test.go) |
-| **P-nn** | Postman folder `nn` | [postman/](../postman/) |
+| **P-HP**, **P-nn** | Postman folder: the happy-path scenario, or the folder for AC-nn (**P-02** covers AC-02 and AC-03, **P-05** covers AC-05 and AC-07, **P-05T** is the offer-timeout folder) | [postman/](../postman/) |
 
 **Verify yourself:** with the stack running (`make up`). `make demo` walks through most of these scenarios with every request/response logged.
 
@@ -38,35 +38,35 @@ Every requirement of [Coding Challenge #3](../../coding-challenge-3.md) is mappe
 
 | Acceptance bullet | How it is met | Code | Tests | Verify yourself |
 |---|---|---|---|---|
-| `POST /rides` creates a ride | ride-service HTTP adapter → `CreateRide` use case | [adapter/http](../services/ride/internal/adapter/http/http.go), [usecase/rides.go](../services/ride/internal/usecase/rides.go) | U-rideUC `TestCreateRidePublishesRideRequested`; I-ride `TestCreateRideStartsRequestedAndCanBeRetrieved`; E `TestHappyPath`; P-01 | `curl -X POST localhost:8080/rides -H 'Idempotency-Key: k1' -d '{…}'` |
+| `POST /rides` creates a ride | ride-service HTTP adapter → `CreateRide` use case | [adapter/http](../services/ride/internal/adapter/http/http.go), [usecase/rides.go](../services/ride/internal/usecase/rides.go) | U-rideUC `TestCreateRidePublishesRideRequested`; I-ride `TestCreateRideStartsRequestedAndCanBeRetrieved`; E `TestHappyPath`; P-HP, P-01 | `curl -X POST localhost:8080/rides -H 'Idempotency-Key: k1' -d '{…}'` |
 | A unique `rideId` is generated | UUIDv7 (time-sortable, RFC 9562) | `messaging.NewID()` | I-ride `TestCreateRideStartsRequestedAndCanBeRetrieved` | response `rideId` |
-| Ride starts in `REQUESTED` | `domain.NewRide` | [domain/ride.go](../services/ride/internal/domain/ride.go) | U-rideUC, I-ride (`starts in REQUESTED`), P-01, P-02 | response `status` |
-| Invalid coordinates rejected; latitude ∈ [-90, 90], longitude ∈ [-180, 180] | Validated in the HTTP adapter (missing fields) and in `domain.NewRide`/`geo.Point.Validate` (ranges); DB `CHECK` constraints as a last guard | [pkg/geo](../pkg/geo/geo.go), [migrations](../services/ride/internal/adapter/postgres/migrations/001_rides.sql) | U-geo `TestValidate` (bounds inclusive, ±0.0001 outside, NaN, missing); U-rideUC `TestCreateRideValidation`; I-ride `TestCreateValidation`; P-03 | `422 INVALID_COORDINATES` |
-| `passengerId` required and must reference a seeded passenger | `domain.ErrPassengerRequired`; `PassengerRepository.Exists` | [usecase/rides.go](../services/ride/internal/usecase/rides.go) | U-rideUC `TestCreateRideValidation`; I-ride `TestCreateValidation` (missing, unknown); P-03 | `422 PASSENGER_REQUIRED` / `UNKNOWN_PASSENGER` |
-| Clients must send `Idempotency-Key` | Missing or over 200 chars → `400` | HTTP adapter | I-ride `TestCreateValidation` (missing key); P-02 | `400 IDEMPOTENCY_KEY_REQUIRED` |
-| Same key + same request returns the original result, no new ride | Key inserted **first, in the ride's transaction**, with request hash + response snapshot; a replay returns the snapshot with `Idempotent-Replayed: true` | `IdempotencyStore` port, [adapter/postgres](../services/ride/internal/adapter/postgres/postgres.go) | U-rideUC `TestCreateRideIdempotency`; I-ride `TestDuplicateRideCreationReturnsOriginal`, **`TestConcurrentDuplicateCreationCreatesOneRide`** (10 parallel); E `TestDuplicateRideCreation`; P-02 | repeat the curl: same `rideId` |
-| Same key + different request rejected | SHA-256 of normalised fields differs → `422` | `usecase.RequestHash` | U-rideUC; I-ride `TestIdempotencyKeyReusedWithDifferentRequestIsRejected`; E; P-02 | `422 IDEMPOTENCY_KEY_REUSED` |
-| Created ride can be retrieved | `GET /rides/{id}` | HTTP adapter | I-ride; E; P-01/02 | `curl localhost:8080/rides/<id>` |
+| Ride starts in `REQUESTED` | `domain.NewRide` | [domain/ride.go](../services/ride/internal/domain/ride.go) | U-rideUC, I-ride (`starts in REQUESTED`), P-HP, P-01 | response `status` |
+| Invalid coordinates rejected; latitude ∈ [-90, 90], longitude ∈ [-180, 180] | Validated in the HTTP adapter (missing fields) and in `domain.NewRide`/`geo.Point.Validate` (ranges); DB `CHECK` constraints as a last guard | [pkg/geo](../pkg/geo/geo.go), [migrations](../services/ride/internal/adapter/postgres/migrations/001_rides.sql) | U-geo `TestValidate` (bounds inclusive, ±0.0001 outside, NaN, missing); U-rideUC `TestCreateRideValidation`; I-ride `TestCreateValidation`; P-01 | `422 INVALID_COORDINATES` |
+| `passengerId` required and must reference a seeded passenger | `domain.ErrPassengerRequired`; `PassengerRepository.Exists` | [usecase/rides.go](../services/ride/internal/usecase/rides.go) | U-rideUC `TestCreateRideValidation`; I-ride `TestCreateValidation` (missing, unknown); P-01 | `422 PASSENGER_REQUIRED` / `UNKNOWN_PASSENGER` |
+| Clients must send `Idempotency-Key` | Missing or over 200 chars → `400` | HTTP adapter | I-ride `TestCreateValidation` (missing key); P-01 | `400 IDEMPOTENCY_KEY_REQUIRED` |
+| Same key + same request returns the original result, no new ride | Key inserted **first, in the ride's transaction**, with request hash + response snapshot; a replay returns the snapshot with `Idempotent-Replayed: true` | `IdempotencyStore` port, [adapter/postgres](../services/ride/internal/adapter/postgres/postgres.go) | U-rideUC `TestCreateRideIdempotency`; I-ride `TestDuplicateRideCreationReturnsOriginal`, **`TestConcurrentDuplicateCreationCreatesOneRide`** (10 parallel); E `TestDuplicateRideCreation`; P-08 | repeat the curl: same `rideId` |
+| Same key + different request rejected | SHA-256 of normalised fields differs → `422` | `usecase.RequestHash` | U-rideUC; I-ride `TestIdempotencyKeyReusedWithDifferentRequestIsRejected`; E; P-08 | `422 IDEMPOTENCY_KEY_REUSED` |
+| Created ride can be retrieved | `GET /rides/{id}` | HTTP adapter | I-ride; E; P-HP | `curl localhost:8080/rides/<id>` |
 
 ### AC-02: Driver Availability
 
 | Acceptance bullet | How it is met | Code | Tests | Verify yourself |
 |---|---|---|---|---|
-| Switch `OFFLINE ⇄ AVAILABLE` via `PUT /drivers/{id}/availability` | `SetStatusIf(from, to)`: one conditional UPDATE | [usecase/drivers.go](../services/driver/internal/usecase/drivers.go), [adapter/postgres](../services/driver/internal/adapter/postgres/postgres.go) | U-driver `TestAvailabilityToggle`; I-driver `TestDriverStatusLifecycle`; P-10 | `curl -X PUT …/drivers/D011/availability -d '{"status":"AVAILABLE"}'` |
+| Switch `OFFLINE ⇄ AVAILABLE` via `PUT /drivers/{id}/availability` | `SetStatusIf(from, to)`: one conditional UPDATE | [usecase/drivers.go](../services/driver/internal/usecase/drivers.go), [adapter/postgres](../services/driver/internal/adapter/postgres/postgres.go) | U-driver `TestAvailabilityToggle`; I-driver `TestDriverStatusLifecycle`; P-02 | `curl -X PUT …/drivers/D011/availability -d '{"status":"AVAILABLE"}'` |
 | Only `AVAILABLE` drivers can receive offers | GEO index contains only AVAILABLE drivers; matcher re-checks status; reservation is `WHERE status='AVAILABLE'` | [domain/match.go](../services/dispatch/internal/domain/match.go), `ReserveIfAvailable` | U-driver `TestOnlyAvailableDriversCanBeOffered`; U-match `TestOfflineDriverExcluded`, `TestBusyAndOfferedDriversExcluded` | — |
-| Offer: `AVAILABLE → OFFERED`; accept: `OFFERED → BUSY` | `ReserveDriver` / `MarkDriverBusy` commands | `ReserveIfAvailable`, `MarkBusyIfOffered` | U-driver `TestOfferMakesAvailableOffered`, `TestAcceptMakesBusyAndCompleteReturnsAvailable`; I-driver `TestDriverStatusLifecycle`; E `TestHappyPath`; P-01 | `GET /drivers/{id}` after each step |
-| Reject or cancel before acceptance: `OFFERED → AVAILABLE` | `ReleaseDriver(rideId)` compensation | `ReleaseIfHeld` | U-driver `TestRejectOrCancelBeforeAcceptReturnsToAvailable`; I-driver `TestRejectBeforeAcceptReturnsAvailable`; I-saga `TestCancelReleasesTheOfferedDriver`; E `TestRejectRematchesToNextDriver`, `TestCancelReleasesOfferedDriver`; P-04, P-07 | |
-| Completing an accepted ride: `BUSY → AVAILABLE` | `RideCompleted` → `ReleaseDriver` | saga `HandleRideEvent` | U-driver; I-saga `TestCompletionReleasesTheDriver`; E `TestHappyPath`; P-01 | |
-| `OFFERED`/`BUSY` cannot receive another offer or go directly `OFFLINE` | Conditional updates match nothing → `409` / `DriverReservationFailed` | `SetStatusIf`, `ReserveIfAvailable` | U-driver `TestOfferedOrBusyCannotGoOffline`; I-driver `TestDriverStatusLifecycle`, `TestSecondReservationIsRejectedWithReply`; E `TestCancelReleasesOfferedDriver`; P-07, P-08 | `409 INVALID_TRANSITION` |
-| All other transitions rejected | Domain rules return `ErrInvalidTransition`/`ErrStale`; API only accepts `AVAILABLE`/`OFFLINE` | [domain/driver.go](../services/driver/internal/domain/driver.go) | U-driver `TestInvalidDriverTransitions`, `TestReleaseForAnotherRideIsIgnored`; P-03 (`BUSY` via API → 422) | |
+| Offer: `AVAILABLE → OFFERED`; accept: `OFFERED → BUSY` | `ReserveDriver` / `MarkDriverBusy` commands | `ReserveIfAvailable`, `MarkBusyIfOffered` | U-driver `TestOfferMakesAvailableOffered`, `TestAcceptMakesBusyAndCompleteReturnsAvailable`; I-driver `TestDriverStatusLifecycle`; E `TestHappyPath`; P-HP | `GET /drivers/{id}` after each step |
+| Reject or cancel before acceptance: `OFFERED → AVAILABLE` | `ReleaseDriver(rideId)` compensation | `ReleaseIfHeld` | U-driver `TestRejectOrCancelBeforeAcceptReturnsToAvailable`; I-driver `TestRejectBeforeAcceptReturnsAvailable`; I-saga `TestCancelReleasesTheOfferedDriver`; E `TestRejectRematchesToNextDriver`, `TestCancelReleasesOfferedDriver`; P-05, P-09 | |
+| Completing an accepted ride: `BUSY → AVAILABLE` | `RideCompleted` → `ReleaseDriver` | saga `HandleRideEvent` | U-driver; I-saga `TestCompletionReleasesTheDriver`; E `TestHappyPath`; P-HP | |
+| `OFFERED`/`BUSY` cannot receive another offer or go directly `OFFLINE` | Conditional updates match nothing → `409` / `DriverReservationFailed` | `SetStatusIf`, `ReserveIfAvailable` | U-driver `TestOfferedOrBusyCannotGoOffline`; I-driver `TestDriverStatusLifecycle`, `TestSecondReservationIsRejectedWithReply`; E `TestCancelReleasesOfferedDriver` | `409 INVALID_TRANSITION` |
+| All other transitions rejected | Domain rules return `ErrInvalidTransition`/`ErrStale`; API only accepts `AVAILABLE`/`OFFLINE` | [domain/driver.go](../services/driver/internal/domain/driver.go) | U-driver `TestInvalidDriverTransitions`, `TestReleaseForAnotherRideIsIgnored`; P-02 (`BUSY` via API → 422) | |
 
 ### AC-03: Driver Location
 
 | Acceptance bullet | How it is met | Code | Tests | Verify yourself |
 |---|---|---|---|---|
-| Location can be updated (`PUT /drivers/{id}/location`) | `UpdateLocation` use case; any status | [usecase/drivers.go](../services/driver/internal/usecase/drivers.go) | I-driver `TestEveryChangeEmitsVersionedEvent`; P-10 | `curl -X PUT …/location -d '{"latitude":…,"longitude":…}'` |
-| Invalid coordinates rejected | `geo.PointInput.ToPoint` + `Validate` | [pkg/geo](../pkg/geo/geo.go) | U-geo `TestValidate`; E `TestInvalidRequests`; P-03 | `422 INVALID_COORDINATES` |
-| Latest location is stored | `drivers.lat/lng` + `version+1`; `DriverLocationUpdated` event | [adapter/postgres](../services/driver/internal/adapter/postgres/postgres.go) | I-driver `TestEveryChangeEmitsVersionedEvent`; P-10 (`GET` shows latest) | `GET /drivers/{id}` |
+| Location can be updated (`PUT /drivers/{id}/location`) | `UpdateLocation` use case; any status | [usecase/drivers.go](../services/driver/internal/usecase/drivers.go) | I-driver `TestEveryChangeEmitsVersionedEvent`; P-02 | `curl -X PUT …/location -d '{"latitude":…,"longitude":…}'` |
+| Invalid coordinates rejected | `geo.PointInput.ToPoint` + `Validate` | [pkg/geo](../pkg/geo/geo.go) | U-geo `TestValidate`; E `TestInvalidRequests`; P-02 | `422 INVALID_COORDINATES` |
+| Latest location is stored | `drivers.lat/lng` + `version+1`; `DriverLocationUpdated` event | [adapter/postgres](../services/driver/internal/adapter/postgres/postgres.go) | I-driver `TestEveryChangeEmitsVersionedEvent`; P-02 (response shows the latest) | `GET /drivers/{id}` |
 | Matching uses the latest known location | Event → Redis GEO projection (Lua: newer `version` wins, so stale/duplicate events are ignored); matcher uses the exact coordinates | [usecase/projection.go](../services/dispatch/internal/usecase/projection.go), [adapter/redis](../services/dispatch/internal/adapter/redis/redis.go) | **I-geo `TestIndexKeepsOnlyLatestAvailableDrivers`** (moves, out-of-order events); P-10 (driver moves next to a waiting ride → gets it) | [sequence §7](sequence-diagram.md#7-driver-availability-and-location-feed-the-geo-index) |
 
 ### AC-04: Driver Matching
@@ -75,25 +75,25 @@ Every requirement of [Coding Challenge #3](../../coding-challenge-3.md) is mappe
 |---|---|---|---|---|
 | Only available drivers are considered | GEO set holds AVAILABLE only; `Rank` drops any other status | [domain/match.go](../services/dispatch/internal/domain/match.go) | U-match `TestOfflineDriverExcluded`, `TestBusyAndOfferedDriversExcluded` | |
 | Default max radius 2 km, configurable | `MATCH_RADIUS_M` (default `2000`) | [cmd/main.go](../services/dispatch/cmd/main.go) | U-match `TestDriverOutsideRadiusExcluded` (incl. a 5 km radius) | `MATCH_RADIUS_M=5000 make up` |
-| Drivers outside the radius excluded | `GEOSEARCH BYRADIUS` + exact Haversine re-check | domain + redis adapter | U-match `TestDriverOutsideRadiusExcluded` (the spec's 0.8 / 1.5 / 3.2 km example); E `TestHappyPath` (3.2 km driver never chosen); P-01 | |
+| Drivers outside the radius excluded | `GEOSEARCH BYRADIUS` + exact Haversine re-check | domain + redis adapter | U-match `TestDriverOutsideRadiusExcluded` (the spec's 0.8 / 1.5 / 3.2 km example); E `TestHappyPath` (3.2 km driver never chosen); P-HP, P-04 | |
 | Drivers ordered by distance | `Rank` sorts by `(distance, driverId)` | domain | U-match `TestNearestDriverSelected` (asserts `[A, B]`) | |
-| Nearest suitable driver selected; ties → smallest `driverId` | `SelectNearest` | domain | U-match `TestNearestDriverSelected`, **`TestEquidistantPicksSmallestDriverID`**; I-saga `TestNearestDriverGetsOfferAndAcceptMovesForward` | `make demo` step 4 |
-| No driver selected when none suitable | `SelectNearest` → `ok=false`; saga `WAITING_FOR_DRIVER`, ride stays `MATCHING` | domain + saga | U-match `TestNoDriverAvailable`; P-09 | |
+| Nearest suitable driver selected; ties → smallest `driverId` | `SelectNearest` | domain | U-match `TestNearestDriverSelected`, **`TestEquidistantPicksSmallestDriverID`**; I-saga `TestNearestDriverGetsOfferAndAcceptMovesForward`; P-04 (tie → A) | `make demo` step 4 |
+| No driver selected when none suitable | `SelectNearest` → `ok=false`; saga `WAITING_FOR_DRIVER`, ride stays `MATCHING` | domain + saga | U-match `TestNoDriverAvailable`; P-06 | |
 | Haversine; invalid input rejected before matching | `geo.HaversineM` (R = 6371.0088 km); coordinates validated at the API | [pkg/geo](../pkg/geo/geo.go) | U-geo `TestHaversine` | design: [ADR-001](adr/ADR-001-matching.md) |
 
 ### AC-05: Ride Offer
 
 | Acceptance bullet | How it is met | Code | Tests | Verify yourself |
 |---|---|---|---|---|
-| Offer sets ride `DRIVER_ASSIGNED`, stores `assignedDriverId`, driver `OFFERED` (pending, not accepted) | `ReserveDriver` → offer `PENDING` → `AssignDriver` | [usecase/orchestrator.go](../services/dispatch/internal/usecase/orchestrator.go) `onReserved` | U-ride `TestAssignStoresDriver`; I-saga `TestNearestDriverGetsOfferAndAcceptMovesForward`; E `TestHappyPath`; P-01 | `GET /drivers/{id}/offer` |
+| Offer sets ride `DRIVER_ASSIGNED`, stores `assignedDriverId`, driver `OFFERED` (pending, not accepted) | `ReserveDriver` → offer `PENDING` → `AssignDriver` | [usecase/orchestrator.go](../services/dispatch/internal/usecase/orchestrator.go) `onReserved` | U-ride `TestAssignStoresDriver`; I-saga `TestNearestDriverGetsOfferAndAcceptMovesForward`; E `TestHappyPath`; P-HP | `GET /drivers/{id}/offer` |
 | Only the driver holding the current offer can accept/reject | `UPDATE offers … WHERE ride_id AND driver_id AND status='PENDING'` | `OfferRepository.RespondPending` | I-saga **`TestOnlyTheOfferedDriverCanRespond`**; P-05 (other driver → 404) | `404 OFFER_NOT_FOUND` |
-| Accept: ride `DRIVER_ACCEPTED`, driver `BUSY` | Pivot → `MarkDriverBusy` + `MarkAccepted` | [usecase/offers.go](../services/dispatch/internal/usecase/offers.go) `Accept` | I-saga; E `TestHappyPath`; P-01, P-05 | |
-| Reject: ride `MATCHING`, `assignedDriverId` cleared, driver `AVAILABLE` | `endOffer`: exclusion + `ReleaseDriver` + `UnassignDriver` | `offers.go` | U-ride `TestRejectionReturnsToMatchingAndClearsDriver`; I-saga `TestRejectionRematchesAndExcludesTheDriverForever`; E `TestRejectRematchesToNextDriver`; P-04 | |
-| A rejecting driver never gets that ride again; still eligible for other rides | `ride_exclusions(ride_id, driver_id)` PK; matcher skips exclusions | postgres adapter + `match` | I-saga (asserts the excluded driver is re-offered **another** ride); E; P-04 | `GET /rides/{id}/dispatch` → `exclusions` |
-| Configurable timeout (default 30 s); expiry = rejection | `OFFER_TIMEOUT`; sweeper `ExpireIfDue` → same `endOffer` path | `offers.go` `SweepExpired` | I-saga `TestTimeoutIsTreatedAsRejection`; **E `TestOfferTimeoutRematches`** (real 30 s); P-11 | wait 30 s |
-| Rejection → attempt another eligible driver | `Reject` → `Match` | `offers.go` | I-saga; E; P-04 | `make demo` step 5 |
-| Cancel allowed in `REQUESTED`/`MATCHING`/`DRIVER_ASSIGNED` (and `DRIVER_ACCEPTED`); releases `OFFERED`/`BUSY` driver | Ride state machine + saga `cancel` compensation | ride domain, saga | U-ride `TestValidTransitions`; I-saga `TestCancelReleasesTheOfferedDriver`; E `TestCancelReleasesOfferedDriver`; P-07, P-08 | |
-| Completion after acceptance | `POST /rides/{id}/complete` (`DRIVER_ACCEPTED → COMPLETED`) | ride domain | U-ride; E `TestHappyPath`; P-01 | |
+| Accept: ride `DRIVER_ACCEPTED`, driver `BUSY` | Pivot → `MarkDriverBusy` + `MarkAccepted` | [usecase/offers.go](../services/dispatch/internal/usecase/offers.go) `Accept` | I-saga; E `TestHappyPath`; P-HP, P-08 | |
+| Reject: ride `MATCHING`, `assignedDriverId` cleared, driver `AVAILABLE` | `endOffer`: exclusion + `ReleaseDriver` + `UnassignDriver` | `offers.go` | U-ride `TestRejectionReturnsToMatchingAndClearsDriver`; I-saga `TestRejectionRematchesAndExcludesTheDriverForever`; E `TestRejectRematchesToNextDriver`; P-05 | |
+| A rejecting driver never gets that ride again; still eligible for other rides | `ride_exclusions(ride_id, driver_id)` PK; matcher skips exclusions | postgres adapter + `match` | I-saga (asserts the excluded driver is re-offered **another** ride); E; P-05 | `GET /rides/{id}/dispatch` → `exclusions` |
+| Configurable timeout (default 30 s); expiry = rejection | `OFFER_TIMEOUT`; sweeper `ExpireIfDue` → same `endOffer` path | `offers.go` `SweepExpired` | I-saga `TestTimeoutIsTreatedAsRejection`; **E `TestOfferTimeoutRematches`** (real 30 s); P-05T | wait 30 s |
+| Rejection → attempt another eligible driver | `Reject` → `Match` | `offers.go` | I-saga; E; P-05 | `make demo` step 5 |
+| Cancel allowed in `REQUESTED`/`MATCHING`/`DRIVER_ASSIGNED` (and `DRIVER_ACCEPTED`); releases `OFFERED`/`BUSY` driver | Ride state machine + saga `cancel` compensation | ride domain, saga | U-ride `TestValidTransitions`; I-saga `TestCancelReleasesTheOfferedDriver`; E `TestCancelReleasesOfferedDriver`; P-06, P-09 | |
+| Completion after acceptance | `POST /rides/{id}/complete` (`DRIVER_ACCEPTED → COMPLETED`) | ride domain | U-ride; E `TestHappyPath`; P-HP | |
 
 ### AC-06: Ride State Machine
 
@@ -101,28 +101,28 @@ Every requirement of [Coding Challenge #3](../../coding-challenge-3.md) is mappe
 |---|---|---|---|---|
 | Lifecycle explicitly implemented | Table-driven pure `Apply(ride, action)` | [domain/ride.go](../services/ride/internal/domain/ride.go) | U-ride (all) | [architecture §7](architecture.md#7-state-machines) |
 | Valid transitions succeed | — | — | U-ride `TestValidTransitions` (9 transitions) | |
-| Invalid transitions rejected (e.g. `COMPLETED → DRIVER_ASSIGNED`) | `ErrInvalidTransition` → `409` / `CommandRejected` | — | U-ride **`TestInvalidTransitions`** (12 cases incl. the spec's example); U-rideUC `TestCommandOnTerminalRideIsRejectedWithReply`; E `TestInvalidRequests`; P-09 | `409 INVALID_TRANSITION` |
+| Invalid transitions rejected (e.g. `COMPLETED → DRIVER_ASSIGNED`) | `ErrInvalidTransition` → `409` / `CommandRejected` | — | U-ride **`TestInvalidTransitions`** (12 cases incl. the spec's example); U-rideUC `TestCommandOnTerminalRideIsRejectedWithReply`; E `TestInvalidRequests`; P-06 | `409 INVALID_TRANSITION` |
 | Duplicate transitions handled safely | Same target + same data → no-op success, no event | — | U-ride `TestDuplicateTransitionsAreNoOps`; U-rideUC `TestDuplicateCommandIsAppliedAndRepliedOnce`; I-ride `TestCommandsAreIdempotentAndHistoryIsRecorded` | repeat cancel → `200` |
-| State changes persisted, incl. clearing `assignedDriverId` | `UPDATE rides … version+1` + `ride_transitions` row, same transaction | [adapter/postgres](../services/ride/internal/adapter/postgres/postgres.go) | I-ride `TestCommandsAreIdempotentAndHistoryIsRecorded` (3 history rows); P-01, P-09 (history) | `GET /rides/{id}/history` |
+| State changes persisted, incl. clearing `assignedDriverId` | `UPDATE rides … version+1` + `ride_transitions` row, same transaction | [adapter/postgres](../services/ride/internal/adapter/postgres/postgres.go) | I-ride `TestCommandsAreIdempotentAndHistoryIsRecorded` (3 history rows); P-HP (history) | `GET /rides/{id}/history` |
 | Timeout follows rejection | Same `endOffer` + `UnassignDriver` | `offers.go` | I-saga `TestTimeoutIsTreatedAsRejection`; E `TestOfferTimeoutRematches` | |
-| `CANCELLED` and `COMPLETED` terminal; driver `AVAILABLE` after either | `Status.Terminal()`; release on both | ride domain, saga | U-ride `TestTerminalStates`; I-saga `TestCancelReleasesTheOfferedDriver`, `TestCompletionReleasesTheDriver`; P-07, P-08 | |
+| `CANCELLED` and `COMPLETED` terminal; driver `AVAILABLE` after either | `Status.Terminal()`; release on both | ride domain, saga | U-ride `TestTerminalStates`; I-saga `TestCancelReleasesTheOfferedDriver`, `TestCompletionReleasesTheDriver`; P-HP, P-06 | |
 
 ### AC-07: Rematching
 
 | Acceptance bullet | How it is met | Code | Tests | Verify yourself |
 |---|---|---|---|---|
 | Rejecting drivers excluded from all later attempts for that ride, even if available again; eligible for other rides | `ride_exclusions` (permanent per ride); `SelectNearest(…, excluded)` | saga + domain | U-match `TestExcludedDriverSkipped`; I-saga **`TestRejectionRematchesAndExcludesTheDriverForever`** (also after a retry, and other rides still get the driver) | `GET /rides/{id}/dispatch` |
-| Another available driver can be selected | `Reject` → `Match` | `offers.go` | I-saga; E `TestRejectRematchesToNextDriver`; P-04 | |
+| Another available driver can be selected | `Reject` → `Match` | `offers.go` | I-saga; E `TestRejectRematchesToNextDriver`; P-05 | |
 | Same driver not repeatedly selected | Exclusions + per-round skips | saga | I-saga (counts `ReserveDriver` = 2 for 2 drivers) | |
-| No eligible drivers → ride stays `MATCHING`, no `assignedDriverId` | `WAITING_FOR_DRIVER` saga state; ride untouched | saga | I-saga; E `TestRejectRematchesToNextDriver`; P-04, P-09 | |
+| No eligible drivers → ride stays `MATCHING`, no `assignedDriverId` | `WAITING_FOR_DRIVER` saga state; ride untouched | saga | I-saga; E `TestRejectRematchesToNextDriver`; P-05, P-06 | |
 
 ### AC-08: Idempotency
 
 | Acceptance bullet | How it is met | Code | Tests |
 |---|---|---|---|
-| Ride creation with `Idempotency-Key` | See AC-01 | ride use case + postgres | U-rideUC `TestCreateRideIdempotency`; I-ride `TestDuplicateRideCreationReturnsOriginal`, `TestConcurrentDuplicateCreationCreatesOneRide`; E `TestDuplicateRideCreation`; P-02 |
+| Ride creation with `Idempotency-Key` | See AC-01 | ride use case + postgres | U-rideUC `TestCreateRideIdempotency`; I-ride `TestDuplicateRideCreationReturnsOriginal`, `TestConcurrentDuplicateCreationCreatesOneRide`; E `TestDuplicateRideCreation`; P-08 |
 | `RideCreated ×3` must not create three rides | Saga PK = `rideId` + inbox on `eventId` | saga + `broker.Inbox` | I-saga **`TestDuplicateRideRequestedStartsOneSaga`** (same id ×3 + new id ×1 → 1 saga) |
-| Driver acceptance (`DriverAccepted ×2` → valid state) | Conditional update; repeat returns the stored outcome, no new commands | `offers.go` `Accept` | I-saga `TestDuplicateAcceptIsIdempotent`; E **`TestDuplicateAcceptKeepsValidState`** (5 parallel); P-05 |
+| Driver acceptance (`DriverAccepted ×2` → valid state) | Conditional update; repeat returns the stored outcome, no new commands | `offers.go` `Accept` | I-saga `TestDuplicateAcceptIsIdempotent`; E **`TestDuplicateAcceptKeepsValidState`** (5 parallel); P-08 |
 | Ride state transition | Idempotent state machine + inbox | ride domain + use case | U-ride `TestDuplicateTransitionsAreNoOps`; U-rideUC `TestDuplicateCommandIsAppliedAndRepliedOnce`; I-ride `TestCommandsAreIdempotentAndHistoryIsRecorded` |
 | Every consumed command/event (all services) | Inbox row in the handler's transaction | [pkg/broker](../pkg/broker/outbox.go) | I-driver `TestDuplicateCommandIsProcessedOnce` |
 | Strategy documented | — | — | [ADR-004](adr/ADR-004-messaging-outbox-inbox.md), [ADR-010 §2](adr/ADR-010-api-and-identifiers.md#part-2-idempotency-key-design-ac-01-ac-08), [architecture §11](architecture.md#11-consistency-concurrency-and-idempotency) |
@@ -133,7 +133,7 @@ Every requirement of [Coding Challenge #3](../../coding-challenge-3.md) is mappe
 |---|---|---|---|
 | The race is identified | Read Redis → reserve: two sagas can pick the same driver | — | [ADR-002 "The races"](adr/ADR-002-concurrency.md), [sequence §4](sequence-diagram.md#4-two-rides-race-for-the-same-driver-ac-09) |
 | Prevents one driver holding two offers/rides | **Atomic `UPDATE drivers … WHERE status='AVAILABLE'`** (row lock); defence in depth: partial unique indexes on pending offers; `CHECK` on drivers | `ReserveIfAvailable` ([adapter/postgres](../services/driver/internal/adapter/postgres/postgres.go)), [dispatch migration](../services/dispatch/internal/adapter/postgres/migrations/001_dispatch.sql) | I-driver **`TestConcurrentReservationOnlyOneWins`** (50 rounds, 2 goroutines behind a barrier, real Postgres) |
-| Only one ride creates the offer; the other stays `MATCHING` or tries another driver | Loser gets `DriverReservationFailed` → round skip → next candidate or `WAITING_FOR_DRIVER` | saga `HandleReply` | I-driver `TestSecondReservationIsRejectedWithReply`; I-saga **`TestTwoRidesCannotOfferTheSameDriver`**; E **`TestConcurrentRidesCannotShareADriver`** (parallel HTTP; the loser gets the driver after the winner cancels); P-06; `make demo` step 9 |
+| Only one ride creates the offer; the other stays `MATCHING` or tries another driver | Loser gets `DriverReservationFailed` → round skip → next candidate or `WAITING_FOR_DRIVER` | saga `HandleReply` | I-driver `TestSecondReservationIsRejectedWithReply`; I-saga **`TestTwoRidesCannotOfferTheSameDriver`**; E **`TestConcurrentRidesCannotShareADriver`** (parallel HTTP; the loser gets the driver after the winner cancels); P-09; `make demo` step 9 |
 | Related race: accept vs timeout | One conditional update on the offer wins | `RespondPending`, `ExpireIfDue` | I-saga `TestAcceptRacingTimeoutHasOneWinner` (20 rounds) |
 | Strategy documented | — | — | [ADR-002](adr/ADR-002-concurrency.md) (compares 10 approaches) |
 
@@ -246,5 +246,5 @@ Run on 2026-11-01 (Colima, Apple Silicon), after the Clean Architecture refactor
 | Unit + architecture | `make test` | 32 tests in 6 packages ✅ |
 | Integration (testcontainers: Postgres 18, Redis 8) | `make test-int` | 23 tests in 4 packages ✅ |
 | End-to-end (gateway REST + gRPC, incl. the real 30 s timeout) | `make test-e2e` | 11 tests ✅ (~37 s) |
-| Postman / newman | `make postman` | 119 requests, 247 assertions, 0 failed ✅ |
+| Postman / newman | `make postman` | 56 requests, 115 assertions, 0 failed ✅ |
 | Architecture rules | part of `make test` | domain pure; no infrastructure in inner rings; adapters independent ✅ |

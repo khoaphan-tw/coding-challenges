@@ -7,7 +7,7 @@ Built for [Coding Challenge #3](../coding-challenge-3.md) as **three Go microser
 | | |
 |---|---|
 | **Requirements** | All 10 acceptance criteria and every §5 evaluation item are met and traced to code and tests → [requirements traceability](docs/requirements-traceability.md) |
-| **Tests** | 32 unit + architecture, 23 integration (real Postgres/Redis), 11 end-to-end (REST + gRPC), 119 Postman requests / 247 assertions, all green → [testing](docs/testing.md) |
+| **Tests** | 32 unit + architecture, 23 integration (real Postgres/Redis), 11 end-to-end (REST + gRPC), 56 Postman requests / 115 checks, all green → [testing](docs/testing.md) |
 | **Design** | C4 architecture, 8 sequence flows, 14 design patterns explained, 12 ADRs that each compare alternatives → [documentation](#documentation) |
 | **Run it** | `make up && make demo` |
 
@@ -76,7 +76,7 @@ curl -s -X POST localhost:8080/rides/<rideId>/complete
 make trace-ride RIDE=<rideId>                                  # what happened, from the logs
 ```
 
-**Postman:** import [postman/ridehail.postman_collection.json](postman/ridehail.postman_collection.json): 12 scenario folders, one per requirement area ([how to use](docs/local-development.md#postman)).
+**Postman:** import [postman/ridehail.postman_collection.json](postman/ridehail.postman_collection.json): a happy-path scenario plus one folder per acceptance criterion ([how to use](docs/local-development.md#postman)).
 
 Full API (12 endpoints with error codes): [architecture §6](docs/architecture.md#6-public-api).
 
@@ -113,7 +113,7 @@ colima stop      # free the VM's CPU and RAM
 | `make test` | Unit tests (state machines, matching, validation, ride use cases with fakes) + **architecture rules** | Go | < 2 s |
 | `make test-int` | + **integration** on real Postgres 18 / Redis 8 via testcontainers (concurrency race, idempotency, saga flows) | Colima | ~15 s |
 | `make test-e2e` | **End-to-end** through the gateway, incl. the real 30 s offer timeout | `make up` | ~40 s |
-| `make postman` | Postman collection via newman | `make up`, Node | ~45 s |
+| `make postman` | Postman collection via newman (9 folders, one per AC) | `make up`, Node | ~40 s |
 
 Highlights:
 

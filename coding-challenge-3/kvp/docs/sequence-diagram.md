@@ -225,7 +225,7 @@ sequenceDiagram
     Note over XS,R: A late or duplicate event with an older version is ignored,<br/>so matching always uses the latest known location (AC-03).<br/>OFFERED/BUSY/OFFLINE → ZREM: only AVAILABLE drivers are candidates (AC-02, AC-04).
 ```
 
-Tests: `TestIndexKeepsOnlyLatestAvailableDrivers`, `TestEveryChangeEmitsVersionedEvent`, Postman folder 10 (a waiting ride gets the driver as soon as it moves close and goes AVAILABLE).
+Tests: `TestIndexKeepsOnlyLatestAvailableDrivers`, `TestEveryChangeEmitsVersionedEvent`, Postman folder AC-09 (the waiting ride gets the driver as soon as that driver is AVAILABLE again).
 
 ---
 

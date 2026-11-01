@@ -20,7 +20,7 @@ How the system is tested, what each level proves, and the invariants the tests p
 | Architecture | Clean Architecture dependency rule | `go test` + `go list` | 4 | `make test` | Go |
 | Integration | Real Postgres 18 / Redis 8 (testcontainers): atomic reservation, idempotent create, saga flows, GEO versioning | `go test -tags integration` | 23 | `make test-int` | Colima |
 | End-to-end | Whole stack through nginx (REST and gRPC), Redpanda, Redis, Postgres | `go test -tags e2e` | 11 | `make test-e2e` | `make up` |
-| Scenario / exploratory | 12 readable scenario folders with assertions | Postman / newman | 119 requests, 247 assertions | `make postman` | `make up`, Node |
+| Scenario / exploratory | Happy path + one folder per acceptance criterion | Postman / newman | 56 requests, 115 checks | `make postman` | `make up`, Node |
 | Demo | Logged walkthrough (every request/response) | bash + curl | — | `make demo` | `make up` |
 
 | Package | Level | Tests |

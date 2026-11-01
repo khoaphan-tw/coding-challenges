@@ -138,27 +138,26 @@ JSON is pretty-printed; `COMPACT=1 make demo` prints one line per body.
 
 ### Postman
 
-Import [postman/ridehail.postman_collection.json](../postman/ridehail.postman_collection.json) (Postman → **Import** → select the file). It has 12 folders, one per scenario, each with assertions:
+Import [postman/ridehail.postman_collection.json](../postman/ridehail.postman_collection.json) (Postman → **Import** → select the file). It has a happy-path scenario and one folder per acceptance criterion, with one or two checks per request:
 
-| Folder | Scenario | ACs |
+| Folder | What it shows | Requests |
 |---|---|---|
-| 00 | Health & seeded data | — |
-| 01 | Happy path: request → offer → accept → complete, history, dispatch view | 01, 02, 04, 05, 06, 10 |
-| 02 | Idempotent ride creation (replay, key reused with another body, missing key) | 01, 08 |
-| 03 | Validation: coordinates, passenger, malformed JSON, driver location/status | 01, 03 |
-| 04 | Reject → rematch → permanent exclusion → ride stays MATCHING | 05, 06, 07 |
-| 05 | Duplicate driver acceptance | 05, 08 |
-| 06 | Two rides, one driver | 09 |
-| 07 | Cancel a pending offer releases the driver | 02, 05, 06 |
-| 08 | Cancel after acceptance (BUSY → AVAILABLE) | 02, 05, 06 |
-| 09 | Invalid ride transitions, terminal states | 06 |
-| 10 | Driver availability and latest location used by matching | 02, 03 |
-| 11 | Offer timeout → rematch (**slow: ~35 s**; use `OFFER_TIMEOUT=5s make up` to speed it up) | 05, 06 |
+| Scenario · Happy path | Request → nearest driver gets the offer → accept → driver `BUSY` → complete → driver `AVAILABLE`; history and dispatch view | 9 |
+| AC-01 · Create ride | `REQUESTED` with an id; invalid coordinates, unknown passenger, missing `Idempotency-Key` rejected | 5 |
+| AC-02 · AC-03 · Driver availability and location | `OFFLINE ⇄ AVAILABLE`; `BUSY` cannot be set; latest location stored; invalid location rejected | 5 |
+| AC-04 · Matching | Nearest wins; a tie goes to the smaller `driverId`; a driver outside 2 km gets nothing | 4 |
+| AC-05 · AC-07 · Reject → rematch → exclusion | Only the offered driver can answer; rejection → next driver; the rejecting driver never gets the ride again; nobody left → `MATCHING` | 9 |
+| AC-05 · Offer timeout (**slow: ~35 s**; `OFFER_TIMEOUT=5s make up` speeds it up) | No answer = rejection → next driver; a late accept → `409` | 5 |
+| AC-06 · Ride state machine | Invalid transition → `409`; repeating a valid one is a no-op | 5 |
+| AC-08 · Idempotency | Same key → original ride; key reused with another body → `422`; duplicate accept → `200`, replayed, valid state | 8 |
+| AC-09 · Two rides, one driver | Exactly one ride gets the driver; after the winner cancels, the driver goes to the waiting ride | 6 |
+
+AC-10 (event-driven dispatch) is exercised by every folder: each result is reached asynchronously through Redpanda. The gRPC API v2 is not in the collection (Postman's collection format has no gRPC requests); see [gRPC API v2 with grpcurl](#grpc-api-v2-with-grpcurl).
 
 How to use it:
 
 * **Run all:** right-click the collection → **Run** and keep the order. Or run a single folder the same way.
-* **Run one request at a time:** open a folder and send its requests top to bottom. The first request of each folder sets up the scenario.
+* **Run one request at a time:** open a folder and send its requests top to bottom. The first request of each folder sets up the scenario in its pre-request script.
 * Each folder picks a **random spot on the map** and creates **its own drivers** through the driver-service fixture API (`{{driverServiceUrl}}/internal/drivers/…`), so folders never interfere with each other or with the seeded drivers.
 * Dispatch is asynchronous, so requests that check a result first **wait in their pre-request script** (up to 10 s, or 45 s for the timeout) until the expected state is reached.
 * Collection variables: `baseUrl` = `http://localhost:8080` (gateway), `driverServiceUrl` = `http://localhost:8082`. Change them under the collection's **Variables** tab if you remapped ports.
