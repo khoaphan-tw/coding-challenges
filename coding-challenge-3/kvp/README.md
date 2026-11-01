@@ -180,6 +180,7 @@ services/<ride|driver|dispatch>/
     ├── domain/           entities + business rules: state machines, matching (pure Go)
     ├── usecase/          application logic + ports.go (interfaces for DB, outbox, …)
     └── adapter/          http · grpc (API v2) · messaging (Kafka) · postgres · redis · driverclient
+api/                      openapi.yaml (REST v1) · proto/ (gRPC v2) · gen/ (generated Go)
 pkg/                      shared: messaging contract, broker (outbox/inbox/consumer), pgutil, obs, geo, …
 test/arch · test/e2e      architecture rules · black-box tests
 ```
@@ -324,7 +325,7 @@ Fourteen patterns, grouped by the problem they solve. Each one is explained in *
 | | [P8 Idempotency key with stored response](docs/patterns.md#p8-idempotency-key-with-stored-response) | `POST /rides` stores key + request hash + response in the ride's transaction; a retry gets the same ride, a reused key with another body gets `422` | `ride/internal/usecase/rides.go` |
 | **Data ownership and reads** | [P9 Database per service](docs/patterns.md#p9-database-per-service) | `ride_db`, `driver_db`, `dispatch_db`, each with its own user, outbox and inbox | `deploy/postgres/init.sql` |
 | | [P10 CQRS-style read model](docs/patterns.md#p10-cqrs-style-read-model-geo-projection) | Driver events build a Redis GEO set of `AVAILABLE` drivers (versioned, so old events are ignored). Redis suggests, Postgres decides | `dispatch/internal/usecase/projection.go` |
-| | [P11 API gateway](docs/patterns.md#p11-api-gateway) | nginx routes by path to the owning service and hides `/internal/*` | `deploy/nginx.conf` |
+| | [P11 API gateway](docs/patterns.md#p11-api-gateway) | nginx routes REST by path and gRPC by service name to the owning service, hides `/internal/*`, serves the API docs | `deploy/nginx.conf` |
 | **Code structure** | [P12 Clean Architecture](docs/patterns.md#p12-clean-architecture-ports-adapters-and-a-composition-root) | domain → use cases (with ports) → adapters; `cmd/main.go` wires them; a test enforces the dependency rule | `services/*`, `test/arch` |
 | | [P13 Unit of work via a transaction port](docs/patterns.md#p13-unit-of-work-via-a-transaction-port) | `TxManager.WithinTx(ctx, fn)`: lock, state, history, outbox and inbox commit together, with no pgx in use cases | `pkg/pgutil` |
 | **Observability** | [P14 Correlation/causation ids, one trace per journey](docs/patterns.md#p14-correlationcausation-ids-and-one-trace-per-long-running-journey) | Every message carries `correlationId` (ride) and `causationId` (the message that caused it); the ride's `traceparent` is stored so every later step joins one trace | `pkg/obs`, `pkg/messaging` |
@@ -360,3 +361,4 @@ All detailed documents are in [docs/](docs/). The challenge requires [architectu
 | [observability.md](docs/observability.md) | What happened to ride R001? (log format, trace-by-id, one trace per ride, dashboard, alerts) |
 | [local-development.md](docs/local-development.md) | How do I install, run, demo and test it on a Mac with Colima? (incl. Postman, config, troubleshooting) |
 | [adr/](docs/adr/README.md) | Why each decision, compared with the alternatives (12 ADRs) |
+| [api/openapi.yaml](api/openapi.yaml), [api/proto](api/proto/) | What exactly does each endpoint accept and return? (REST contract, browsable at http://localhost:8080/docs/; gRPC v2 contracts) |

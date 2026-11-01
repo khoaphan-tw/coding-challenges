@@ -296,6 +296,9 @@ Set in [docker-compose.yml](../docker-compose.yml). The dispatch values can be o
 | Symptom | Fix |
 |---|---|
 | `docker: unknown command: docker compose` | Add `cliPluginsExtraDirs` (step 1) |
+| `make up` fails with "port is already allocated" (8080, 9090, 3000, …) | Another program uses the port: `lsof -nP -iTCP:9090 -sTCP:LISTEN`, stop it or change the left side of the mapping in `docker-compose.yml` |
+| `grpcurl: … connection refused` / `make grpc-offers` hangs | Stack not up (`make ps`), or call the gateway on `localhost:9090` with `-plaintext` |
+| http://localhost:8080/docs/ shows "Failed to load API definition" | `docker compose restart gateway swagger-ui` (the gateway serves `api/openapi.yaml` from a file mount) |
 | `Cannot connect to the Docker daemon` | `colima status` → `colima start`; check `docker context ls` / `$DOCKER_HOST` |
 | Colima warns "DOCKER_HOST overrides the active context" | Harmless if `DOCKER_HOST` points at `~/.colima/docker.sock` |
 | `make up` times out on `redpanda` or services restart in a loop | Not enough memory: `colima stop && colima start --cpu 4 --memory 8` |

@@ -66,7 +66,7 @@ Format does not affect Loki: records go there through OTLP with every key as a s
 
 ## Decision
 
-* **Instrumentation:** OpenTelemetry Go SDK (`otelhttp`, franz-go header propagation, `redisotel`, `otelslog`) → OTLP gRPC → `grafana/otel-lgtm` (pinned `0.39.0`).
+* **Instrumentation:** OpenTelemetry Go SDK (`otelhttp`, `otelgrpc` for the gRPC API v2, franz-go header propagation, `redisotel`, `otelslog`) → OTLP gRPC → `grafana/otel-lgtm` (pinned `0.39.0`).
 * **Logs:** `log/slog` text lines on stdout and OTLP to Loki. A custom handler adds `ride_id`, `driver_id`, `offer_id`, `event_id`, `causation_id`, `message_type`, `saga_step`, `trace_id`, `span_id` from the context.
 * **Payloads:** HTTP request and response bodies on the access log; every produced and consumed message with its value (truncated at 4 KB).
 * **One trace per ride** ([pkg/obs/trace.go](../../pkg/obs/trace.go)): `rides.trace_parent` and `dispatch_sagas.trace_parent`, `ContinueTrace`, span links, and the `ride.id` span attribute. API responses include `traceId`.

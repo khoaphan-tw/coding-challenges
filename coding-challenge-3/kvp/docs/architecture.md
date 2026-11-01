@@ -112,6 +112,7 @@ Every service has the same rings ([ADR-012](adr/ADR-012-clean-architecture.md)).
 flowchart TB
     subgraph adapters["adapter/ (interface adapters)"]
       HTTP[http: controllers, DTOs,<br/>error → problem+json]
+      GRPC[grpc: API v2 streams<br/>driver · dispatch]
       MSG[messaging: Kafka envelope → use case]
       PG[postgres: repositories, migrations]
       RED[redis · driverclient<br/>dispatch only]
@@ -136,7 +137,7 @@ flowchart TB
 | **domain** | `Ride`, `Apply(ride, action)` state machine, `NewRide` validation | `Driver`, `SetAvailability`/`Reserve`/`MarkBusy`/`Release` rules | `Saga`, `Offer`, `Step`; `SelectNearest` matching |
 | **usecase** | `CreateRide` (idempotent), `Cancel`, `Complete`, `HandleCommand` | `SetAvailability`, `UpdateLocation`, `HandleCommand` (reserve / busy / release) | `Orchestrator` (saga), `Accept`/`Reject`, `SweepExpired`, `RetryAndResume`, `Projection` |
 | **ports** | `RideRepository`, `PassengerRepository`, `IdempotencyStore`, `TxManager`, `Publisher`, `Inbox` | `DriverRepository` (`ReserveIfAvailable`, `MarkBusyIfOffered`, `ReleaseIfHeld`, `SetStatusIf`), `TxManager`, `Publisher`, `Inbox` | `SagaRepository`, `OfferRepository`, `ExclusionRepository`, `CandidateSource`, `GeoIndex`, `DriverDirectory`, `TxManager`, `Publisher`, `Inbox` |
-| **adapters** | http, messaging, postgres | http, messaging, postgres | http, messaging, postgres, redis, driverclient |
+| **adapters** | http, messaging, postgres | http, grpc, messaging, postgres | http, grpc, messaging, postgres, redis, driverclient |
 
 **One transaction across rings.** A use case calls `Tx.WithinTx(ctx, fn)`. Repositories and the outbox join the transaction carried in `ctx`, so "lock row → domain decides → write state + history + outbox" commits atomically while the use case never imports pgx.
 
