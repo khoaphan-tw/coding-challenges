@@ -1,0 +1,46 @@
+# --- Go ---
+# Binaries (go build output; images are built in Docker)
+/bin/
+/dist/
+/ride-service
+/driver-service
+/dispatch-service
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+
+# Test and coverage output
+*.out
+coverage.*
+*.coverprofile
+/test-results/
+newman/
+
+# Go workspace files (this project is a single module)
+go.work
+go.work.sum
+
+# --- Local configuration and secrets ---
+.env
+.env.*
+!.env.example
+docker-compose.override.yml
+
+# --- Tooling output ---
+node_modules/
+.playwright-mcp/
+*.log
+tmp/
+
+# --- Editors and IDEs ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# --- OS ---
+.DS_Store
+Thumbs.db
