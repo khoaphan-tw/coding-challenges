@@ -3,7 +3,7 @@
 //
 // main is the composition root (Clean Architecture): it builds the driven
 // adapters (Postgres, Redis, driver-service client, outbox, inbox), injects
-// them into the use cases, and connects the driving adapters (HTTP,
+// them into the use cases, and connects the driving adapters (HTTP, gRPC,
 // Redpanda consumers, background workers).
 package main
 
@@ -17,11 +17,13 @@ import (
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	goredis "github.com/redis/go-redis/v9"
 
+	dispatchv2 "ridehail/api/gen/ridehail/dispatch/v2"
 	"ridehail/pkg/broker"
 	"ridehail/pkg/messaging"
 	"ridehail/pkg/pgutil"
 	"ridehail/pkg/svc"
 	"ridehail/services/dispatch/internal/adapter/driverclient"
+	dgrpc "ridehail/services/dispatch/internal/adapter/grpc"
 	dhttp "ridehail/services/dispatch/internal/adapter/http"
 	dmsg "ridehail/services/dispatch/internal/adapter/messaging"
 	"ridehail/services/dispatch/internal/adapter/postgres"
@@ -61,6 +63,11 @@ func main() {
 			}
 			return rdb.Ping(ctx).Err()
 		}}).Routes(rt.Mux)
+
+		// Driving adapters: gRPC (API v2, offers pushed to drivers).
+		dispatchv2.RegisterOfferServiceServer(rt.GRPC, &dgrpc.Server{Orchestrator: orch,
+			PollInterval: svc.Duration("OFFER_STREAM_POLL_INTERVAL", 500*time.Millisecond),
+			Heartbeat:    svc.Duration("OFFER_STREAM_HEARTBEAT", 15*time.Second)})
 
 		// Driving adapters: Redpanda consumers.
 		h := dmsg.Handlers{Orchestrator: orch, Projection: proj}

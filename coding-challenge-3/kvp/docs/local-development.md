@@ -9,7 +9,7 @@ Tested on macOS (Apple Silicon) with Colima 0.x / Docker 29.5 / Compose 5.6 / Go
 ## 1. Install the tools (one time)
 
 ```bash
-brew install colima docker docker-compose docker-buildx lazydocker go jq
+brew install colima docker docker-compose docker-buildx lazydocker go jq grpcurl
 ```
 
 | Tool | Why |
@@ -20,6 +20,9 @@ brew install colima docker docker-compose docker-buildx lazydocker go jq
 | `lazydocker` | Terminal UI for containers, logs and stats |
 | `go` | Build and run tests on the host (Go ≥ 1.27) |
 | `jq` | Used by `make trace-ride` and `make demo` |
+| `grpcurl` | Optional: call the gRPC API v2 from the terminal (`make grpc-offers`, `make grpc-location`) |
+
+Only to change the `.proto` files (generated code is committed): `brew install protobuf` and `go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12 google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1`, then `make proto`.
 
 ### Let the Docker CLI find the plugins
 
@@ -94,10 +97,10 @@ Startup order (Compose health checks enforce it):
 
 | Container | Purpose | URL / port on your Mac |
 |---|---|---|
-| `gateway` | **Public API**: routes by path to the services | **http://localhost:8080** |
+| `gateway` | **Public API**: REST v1 routed by path; gRPC v2 routed by service | **http://localhost:8080** (REST), **localhost:9090** (gRPC) |
 | `ride-service` | Rides, passengers, ride state machine | localhost:8081 |
-| `driver-service` | Driver status/location, atomic reservation | localhost:8082 (also `/internal/*` fixtures) |
-| `dispatch-service` | Saga, matching, offers, timeouts, GEO projection | localhost:8083 |
+| `driver-service` | Driver status/location, atomic reservation; gRPC `DriverLocationService` | localhost:8082 (also `/internal/*` fixtures) |
+| `dispatch-service` | Saga, matching, offers, timeouts, GEO projection; gRPC `OfferService` | localhost:8083 |
 | `postgres` | 3 databases (user `postgres` / `postgres`) | localhost:5432 |
 | `redis` | GEO index | localhost:6379 |
 | `redpanda` | Kafka API broker | localhost:19092 |
@@ -196,6 +199,25 @@ curl -s -X PUT localhost:8080/drivers/D011/location -d '{"latitude":10.7770,"lon
 
 Full API: [architecture.md §6](architecture.md#6-public-api).
 
+### gRPC API v2 with grpcurl
+
+Two driver-app APIs also exist as gRPC streams on the gateway's port **9090** ([ADR-010 Part 6](adr/ADR-010-api-and-identifiers.md#part-6-grpc-api-v2-for-two-driver-app-apis)).
+
+```bash
+# Terminal 1: driver D001 waits for offers (pushed, no polling). Ctrl+C to stop.
+make grpc-offers DRIVER=D001
+
+# Terminal 2: request a ride near D001 → terminal 1 prints an OFFERED event;
+# accept or reject it with REST → terminal 1 prints CLOSED with the final status.
+curl -s -X POST localhost:8080/rides -H 'Idempotency-Key: grpc-1' \
+  -d '{"passengerId":"P001","pickup":{"latitude":10.7769,"longitude":106.7009},"destination":{"latitude":10.8231,"longitude":106.6297}}'
+
+# Stream location updates for D010 (each one is acknowledged with the new version)
+make grpc-location DRIVER=D010
+```
+
+Without make: `grpcurl -plaintext -import-path api/proto -proto ridehail/dispatch/v2/offers.proto -d '{"driverId":"D001"}' localhost:9090 ridehail.dispatch.v2.OfferService/WatchOffers`. Postman can also call gRPC: create a gRPC request, enter `localhost:9090`, and import the `.proto` file from [api/proto](../api/proto/).
+
 ### Look inside
 
 | Want to see… | Where |
@@ -261,6 +283,9 @@ Set in [docker-compose.yml](../docker-compose.yml). The dispatch values can be o
 | `TOPIC_PARTITIONS` | `6` | all | Partitions when topics are first created |
 | `LOG_LEVEL` | `info` | all | `debug` also logs outbox batches |
 | `LOG_FORMAT` | `text` | all | `text` = plain `key=value` lines; `json` = one JSON object per line |
+| `GRPC_ADDR` | `:9090` | driver, dispatch | gRPC listen address (API v2) |
+| `OFFER_STREAM_POLL_INTERVAL` | `500ms` | dispatch | How often an open `WatchOffers` stream checks for a new or closed offer |
+| `OFFER_STREAM_HEARTBEAT` | `15s` | dispatch | Keep-alive event on idle `WatchOffers` streams |
 
 ## 8. Troubleshooting
 

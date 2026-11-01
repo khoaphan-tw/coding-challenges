@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package ridehail.dispatch.v2;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "ridehail/api/gen/ridehail/dispatch/v2;dispatchv2";
+
+// OfferService is version 2 of offer delivery to drivers (AC-05).
+//
+//   v1 (REST): the driver app polls GET /drivers/{driverId}/offer.
+//   v2 (gRPC): the driver app opens one server stream and offers are pushed.
+//
+// Drivers still answer with the REST endpoints
+// POST /rides/{rideId}/offers/{driverId}/accept and /reject.
+service OfferService {
+  // WatchOffers streams the driver's offers: OFFERED when a new offer is
+  // waiting, CLOSED when it is accepted, rejected, expired or cancelled, and
+  // HEARTBEAT periodically so proxies keep an idle stream open.
+  rpc WatchOffers(WatchOffersRequest) returns (stream OfferEvent);
+}
+
+message WatchOffersRequest {
+  string driver_id = 1;
+}
+
+message OfferEvent {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    OFFERED = 1;
+    CLOSED = 2;
+    HEARTBEAT = 3;
+  }
+  Type type = 1;
+  // Empty for HEARTBEAT.
+  Offer offer = 2;
+  google.protobuf.Timestamp sent_at = 3;
+}
+
+message Offer {
+  string offer_id = 1;
+  string ride_id = 2;
+  string driver_id = 3;
+  // PENDING, ACCEPTED, REJECTED, EXPIRED or CANCELLED.
+  string status = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp expires_at = 6;
+  google.protobuf.Timestamp responded_at = 7;
+}

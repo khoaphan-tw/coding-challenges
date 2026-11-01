@@ -47,6 +47,7 @@ services/<svc>/
     │                      Imports domain, pkg/messaging (pure message contract), pkg/obs (OTel API).
     └── adapter/
         ├── http/          Driving: decode request → call use case → present JSON / RFC 9457 problem
+        ├── grpc/          Driving (driver, dispatch): gRPC API v2 streams → same use cases as http/
         ├── messaging/     Driving: decode Kafka envelope → call use case
         ├── postgres/      Driven: implements repository ports with pgx (+ embedded migrations)
         ├── redis/         Driven (dispatch): GEO index, implements CandidateSource + GeoIndex
@@ -56,7 +57,7 @@ pkg/                       Shared, framework-level code (outer ring)
 ├── broker/                Outbox, relay, inbox, consumer with retry/DLQ (implements Publisher/Inbox ports)
 ├── pgutil/                Connect, migrate, TxManager (implements the TxManager port)
 ├── obs/  obs/otelsetup/   Correlation, trace helpers (API) / SDK and exporter wiring
-├── httpx/, svc/, geo/, testpg/
+├── httpx/, grpcx/, svc/, geo/, testpg/
 ```
 
 ### Ports per service

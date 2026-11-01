@@ -343,13 +343,13 @@ Each service has its own database user and runs its own embedded migrations at s
 
 **Pattern.** One entry point routes each request to the owning service and applies edge concerns in one place.
 
-**How it works here** ([deploy/nginx.conf](../deploy/nginx.conf)): nginx on `:8080` routes offer accept/reject, `/rides/{id}/dispatch` and `/drivers/{id}/offer` to dispatch-service, other `/rides` paths to ride-service and other `/drivers` paths to driver-service, and returns `404` for `/internal/*`. Upstreams are variables resolved through Docker's DNS (`resolver 127.0.0.11 valid=5s`), so a rebuilt container's new IP is picked up without restarting nginx.
+**How it works here** ([deploy/nginx.conf](../deploy/nginx.conf)): nginx on `:8080` routes offer accept/reject, `/rides/{id}/dispatch` and `/drivers/{id}/offer` to dispatch-service, other `/rides` paths to ride-service and other `/drivers` paths to driver-service, and returns `404` for `/internal/*`. Upstreams are variables resolved through Docker's DNS (`resolver 127.0.0.11 valid=5s`), so a rebuilt container's new IP is picked up without restarting nginx. A second listener on `:9090` speaks HTTP/2 and routes gRPC calls (API v2) by service name: `/ridehail.driver.v2.DriverLocationService/` to driver-service and `/ridehail.dispatch.v2.OfferService/` to dispatch-service, with stream timeouts raised to 1 h.
 
 **Without it.** Clients coupled to the service split; internal endpoints exposed.
 
 **Trade-offs.** One more hop and component. No authentication or rate limiting yet; those would be added here.
 
-**Proof.** Every e2e test and the whole Postman collection go through the gateway.
+**Proof.** Every e2e test (REST and gRPC) and the whole Postman collection go through the gateway.
 
 ---
 
@@ -367,7 +367,7 @@ Each service has its own database user and runs its own embedded migrations at s
 |---|---|---|---|
 | Entities | `internal/domain` | State machines, matching, validation (pure Go) | Standard library, `pkg/geo` |
 | Use cases | `internal/usecase` | Application flows (create ride, saga, offers) + `ports.go` | `domain`, `pkg/messaging` (contract), `pkg/obs` (API) |
-| Interface adapters | `internal/adapter/{http,messaging,postgres,redis,driverclient}` | Driving adapters (HTTP, Kafka handlers) call use cases; driven adapters implement ports | Use cases, infrastructure libraries |
+| Interface adapters | `internal/adapter/{http,grpc,messaging,postgres,redis,driverclient}` | Driving adapters (HTTP, gRPC, Kafka handlers) call use cases; driven adapters implement ports | Use cases, infrastructure libraries |
 | Frameworks and drivers | `pkg/broker`, `pkg/pgutil`, `pkg/obs/otelsetup`, … | Outbox, relay, consumer, transactions, OTel SDK | Anything |
 | Composition root | `cmd/main.go` | Builds adapters, injects them into use cases, starts servers and workers | Everything |
 

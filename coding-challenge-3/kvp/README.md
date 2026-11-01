@@ -7,7 +7,7 @@ Built for [Coding Challenge #3](../coding-challenge-3.md) as **three Go microser
 | | |
 |---|---|
 | **Requirements** | All 10 acceptance criteria and every §5 evaluation item are met and traced to code and tests → [requirements traceability](docs/requirements-traceability.md) |
-| **Tests** | 32 unit + architecture, 23 integration (real Postgres/Redis), 8 end-to-end, 119 Postman requests / 247 assertions, all green → [testing](docs/testing.md) |
+| **Tests** | 32 unit + architecture, 23 integration (real Postgres/Redis), 11 end-to-end (REST + gRPC), 119 Postman requests / 247 assertions, all green → [testing](docs/testing.md) |
 | **Design** | C4 architecture, 8 sequence flows, 14 design patterns explained, 12 ADRs that each compare alternatives → [documentation](#documentation) |
 | **Run it** | `make up && make demo` |
 
@@ -50,7 +50,8 @@ make up          # build + start all 10 containers, waits until healthy (~30 s a
 
 | Open | What |
 |---|---|
-| http://localhost:8080 | **API** (gateway) |
+| http://localhost:8080 | **REST API v1** (gateway) |
+| localhost:9090 | **gRPC API v2** (gateway): driver location stream and offer push, see [below](#grpc-api-v2) |
 | http://localhost:3000 | Grafana → Dashboards → *Dispatch overview* (logs, traces, metrics) |
 | http://localhost:8088 | Redpanda Console (topics, messages, consumer groups) |
 | `lazydocker` | Containers, logs, restarts in the terminal |
@@ -78,6 +79,23 @@ make trace-ride RIDE=<rideId>                                  # what happened, 
 **Postman:** import [postman/ridehail.postman_collection.json](postman/ridehail.postman_collection.json): 12 scenario folders, one per requirement area ([how to use](docs/local-development.md#postman)).
 
 Full API (12 endpoints with error codes): [architecture §6](docs/architecture.md#6-public-api).
+
+### gRPC API v2
+
+The two highest-frequency driver-app calls also exist as **gRPC streams** on `localhost:9090`. They call the same use cases as REST:
+
+| v2 RPC | Replaces | Why a stream |
+|---|---|---|
+| `ridehail.driver.v2.DriverLocationService/StreamLocations` | `PUT /drivers/{id}/location` | One connection for an update every few seconds; each update is acknowledged |
+| `ridehail.dispatch.v2.OfferService/WatchOffers` | polling `GET /drivers/{id}/offer` | Offers are pushed (`OFFERED`, then `CLOSED`) instead of polled |
+
+```bash
+brew install grpcurl
+make grpc-offers DRIVER=D001      # waits for offers; request a ride in another terminal
+make grpc-location DRIVER=D010    # streams two location updates
+```
+
+Contracts: [api/proto](api/proto/). Why only these two: [ADR-010 Part 6](docs/adr/ADR-010-api-and-identifiers.md#part-6-grpc-api-v2-for-two-driver-app-apis).
 
 ### 4. Stop
 
@@ -160,7 +178,7 @@ services/<ride|driver|dispatch>/
 └── internal/
     ├── domain/           entities + business rules: state machines, matching (pure Go)
     ├── usecase/          application logic + ports.go (interfaces for DB, outbox, …)
-    └── adapter/          http · messaging (Kafka) · postgres · redis · driverclient
+    └── adapter/          http · grpc (API v2) · messaging (Kafka) · postgres · redis · driverclient
 pkg/                      shared: messaging contract, broker (outbox/inbox/consumer), pgutil, obs, geo, …
 test/arch · test/e2e      architecture rules · black-box tests
 ```
@@ -274,7 +292,7 @@ Plus B4–B6, S3/S4/S6, T4/T5, the 1k → 100k → 1M evolution and the seven to
 | Messaging | Outbox + inbox, at-least-once | No lost or phantom events, no extra infrastructure | [ADR-004](docs/adr/ADR-004-messaging-outbox-inbox.md) |
 | Broker | Redpanda | Kafka API in one light container | [ADR-009](docs/adr/ADR-009-message-broker.md) |
 | Data | PostgreSQL 18 + Redis 8 | Conditional updates, `SKIP LOCKED`, partial unique indexes; in-memory geo search | [ADR-008](docs/adr/ADR-008-data-stores.md), [ADR-001](docs/adr/ADR-001-matching.md) |
-| API | REST + RFC 9457, UUIDv7 | Matches the spec; standard errors; time-sortable ids | [ADR-010](docs/adr/ADR-010-api-and-identifiers.md) |
+| API | REST + RFC 9457 (v1); gRPC streams for 2 driver APIs (v2); UUIDv7 | Matches the spec; standard errors; streams where they pay off; time-sortable ids | [ADR-010](docs/adr/ADR-010-api-and-identifiers.md) |
 | Observability | OpenTelemetry → Grafana LGTM | Vendor-neutral; one container locally | [ADR-005](docs/adr/ADR-005-observability.md) |
 | Runtime | Colima + Compose + lazydocker, nginx gateway | No Docker Desktop; one-command start | [local-development.md](docs/local-development.md), [deploy/nginx.conf](deploy/nginx.conf) |
 | Testing | Unit + fakes + testcontainers + e2e + Postman | AC-09 proven on a real database | [ADR-011](docs/adr/ADR-011-testing-strategy.md) |

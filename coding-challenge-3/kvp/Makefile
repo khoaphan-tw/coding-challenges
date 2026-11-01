@@ -4,7 +4,7 @@ COMPOSE := docker compose
 # testcontainers + Colima: use the socket path as seen from inside the VM.
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE ?= /var/run/docker.sock
 
-.PHONY: help up down clean ps logs build test test-int test-e2e test-all vet trace-ride trace-logs demo postman postman-gen rebuild-geo replay-dlq psql
+.PHONY: help up down clean ps logs build test test-int test-e2e test-all vet trace-ride trace-logs demo postman postman-gen proto grpc-offers grpc-location rebuild-geo replay-dlq psql
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -55,6 +55,20 @@ postman: ## Run the Postman collection from the CLI with newman (needs Node; ~45
 
 postman-gen: ## Regenerate the Postman collection from scripts/gen-postman.py
 	python3 scripts/gen-postman.py postman/ridehail.postman_collection.json
+
+proto: ## Regenerate gRPC code from api/proto (needs protoc, protoc-gen-go, protoc-gen-go-grpc)
+	PATH="$$PATH:$$(go env GOPATH)/bin" protoc -I api/proto --go_out=. --go_opt=module=ridehail \
+	  --go-grpc_out=. --go-grpc_opt=module=ridehail $$(find api/proto -name '*.proto')
+
+GRPCURL := grpcurl -plaintext -import-path api/proto
+
+grpc-offers: ## API v2: watch a driver's offers as a gRPC stream (Ctrl+C to stop): make grpc-offers DRIVER=D001
+	$(GRPCURL) -proto ridehail/dispatch/v2/offers.proto -d '{"driverId":"$(or $(DRIVER),D001)"}' \
+	  localhost:9090 ridehail.dispatch.v2.OfferService/WatchOffers
+
+grpc-location: ## API v2: stream two location updates for a driver: make grpc-location DRIVER=D010 (moves it ~10 m)
+	$(GRPCURL) -proto ridehail/driver/v2/location.proto -d '{"driverId":"$(or $(DRIVER),D010)","latitude":10.7969,"longitude":106.7010,"seq":1} {"driverId":"$(or $(DRIVER),D010)","latitude":10.7969,"longitude":106.7009,"seq":2}' \
+	  localhost:9090 ridehail.driver.v2.DriverLocationService/StreamLocations
 
 rebuild-geo: ## Rebuild the Redis GEO index from driver-service
 	curl -s -X POST localhost:8083/internal/geo/rebuild; echo

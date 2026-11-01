@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package ridehail.driver.v2;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "ridehail/api/gen/ridehail/driver/v2;driverv2";
+
+// DriverLocationService is version 2 of the driver location API (AC-03).
+//
+//   v1 (REST): PUT /drivers/{driverId}/location, one HTTP request per update.
+//   v2 (gRPC): one long-lived bidirectional stream per driver app; each update
+//              is applied exactly like the REST call and acknowledged.
+service DriverLocationService {
+  // StreamLocations accepts a stream of location updates and answers each one
+  // with an acknowledgement. An invalid update is rejected in its ack and the
+  // stream stays open.
+  rpc StreamLocations(stream LocationUpdate) returns (stream LocationAck);
+}
+
+message LocationUpdate {
+  string driver_id = 1;
+  // Required. Latitude in [-90, 90].
+  optional double latitude = 2;
+  // Required. Longitude in [-180, 180].
+  optional double longitude = 3;
+  // Optional client sequence number, echoed in the ack.
+  uint64 seq = 4;
+}
+
+message LocationAck {
+  uint64 seq = 1;
+  string driver_id = 2;
+  bool accepted = 3;
+  // Set when accepted: the driver after the update. The version grows with
+  // every change, so the GEO index always keeps the latest location.
+  int64 version = 4;
+  string status = 5;
+  double latitude = 6;
+  double longitude = 7;
+  google.protobuf.Timestamp location_updated_at = 8;
+  // Set when rejected, with the same codes as the REST API:
+  // INVALID_REQUEST, INVALID_COORDINATES, DRIVER_NOT_FOUND.
+  string error_code = 9;
+  string error_detail = 10;
+}

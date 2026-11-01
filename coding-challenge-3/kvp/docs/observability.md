@@ -13,7 +13,7 @@ Every service writes **plain-text `key=value` lines** to stdout (Go `log/slog` t
 | `event_id`, `causation_id`, `message_type` | The message being handled or produced, and the message or request that caused it |
 | `saga_step`, `from`, `to`, `outcome` | State changes; `outcome` = `duplicate_skipped`, `invalid_transition`, `reservation_conflict`, … |
 
-Three kinds of "traffic" lines carry full payloads (one-line, quoted, truncated at 4 KB):
+Four kinds of "traffic" lines carry full payloads (one-line, quoted, truncated at 4 KB):
 
 **HTTP access log**: one line per request (`msg="http request"`):
 
@@ -30,6 +30,14 @@ time=2026-11-01T10:22:42.434Z level=INFO msg="message produced" service=dispatch
 ```
 
 **Consumed message**: one line per message received (`msg="message consumed"`) with `consumer`, `topic`, `partition`, `offset`, `key` and the raw `value`. Then come the handler's own lines.
+
+**gRPC (API v2)**: `msg="grpc stream opened"` when a stream starts, one `msg="grpc message"` line per message in each direction (`direction=recv|send`, the message as JSON in `body`, `driver_id`), and `msg="grpc stream closed"` with the gRPC `code`, `duration_ms` and message counts:
+
+```text
+time=2026-11-01T15:45:09.010Z level=INFO msg="grpc stream closed" service=dispatch-service method=/ridehail.dispatch.v2.OfferService/WatchOffers code=OK duration_ms=1002 messages_received=1 messages_sent=2 driver_id=E2E-0c054405 trace_id=2a4a1a1d… span_id=6d73762b…
+```
+
+Each stream is its own trace (span `ridehail.dispatch.v2.OfferService/WatchOffers`, created by `otelgrpc`); find a driver's stream lines with `{service_name="dispatch-service"} | driver_id = "D001"`.
 
 Other rules:
 * Each state change logs exactly one `INFO` line with `from`, `to` and its cause.

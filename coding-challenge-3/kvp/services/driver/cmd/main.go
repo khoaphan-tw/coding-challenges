@@ -7,10 +7,12 @@ import (
 	"context"
 	"io/fs"
 
+	driverv2 "ridehail/api/gen/ridehail/driver/v2"
 	"ridehail/pkg/broker"
 	"ridehail/pkg/messaging"
 	"ridehail/pkg/pgutil"
 	"ridehail/pkg/svc"
+	dgrpc "ridehail/services/driver/internal/adapter/grpc"
 	dhttp "ridehail/services/driver/internal/adapter/http"
 	dmsg "ridehail/services/driver/internal/adapter/messaging"
 	"ridehail/services/driver/internal/adapter/postgres"
@@ -27,6 +29,7 @@ func main() {
 			Inbox:     broker.Inbox{Consumer: dmsg.ConsumerName},
 		}).Init()
 		(&dhttp.Handler{Drivers: drivers, Ready: repo.Ready}).Routes(rt.Mux)
+		driverv2.RegisterDriverLocationServiceServer(rt.GRPC, &dgrpc.Server{Drivers: drivers}) // API v2
 		rt.Consume(dmsg.ConsumerName, []string{messaging.TopicDriverCommands}, dmsg.CommandHandler{Drivers: drivers}.Handle)
 		return nil
 	})

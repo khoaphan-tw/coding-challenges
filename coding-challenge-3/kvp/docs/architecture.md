@@ -50,15 +50,15 @@ flowchart LR
 * **Drivers** go online or offline, send their location, poll for an offer, accept or reject it, and complete the ride.
 * **Engineers** investigate any ride by `rideId`, `driverId`, `eventId` or `traceId`.
 
-Out of scope (challenge §7): payments, pricing, authentication, registration, real-time push, ETA, multi-region, Kubernetes.
+Out of scope (challenge §7): payments, pricing, authentication, registration, mobile push notifications, ETA, multi-region, Kubernetes. (Offers can be pushed to a connected driver app through the gRPC v2 stream.)
 
 ## 3. Containers (C4 level 2)
 
 ```mermaid
 flowchart LR
     P([Passenger]) -->|HTTP| GW
-    D([Driver]) -->|HTTP| GW
-    GW["api-gateway<br/>nginx :8080"]
+    D([Driver]) -->|HTTP + gRPC| GW
+    GW["api-gateway<br/>nginx :8080 REST · :9090 gRPC"]
 
     subgraph RS[ride-service]
       RAPI[rides · passengers<br/>ride state machine<br/>Idempotency-Key]
@@ -73,6 +73,8 @@ flowchart LR
     GW -->|/rides…| RAPI
     GW -->|/drivers…| DAPI
     GW -->|/rides/:id/offers/…, /rides/:id/dispatch,<br/>/drivers/:id/offer| ORCH
+    GW -.gRPC v2: DriverLocationService.-> DAPI
+    GW -.gRPC v2: OfferService.-> ORCH
 
     RAPI --- RDB[(ride_db)]
     DAPI --- DDB[(driver_db)]
@@ -88,7 +90,7 @@ flowchart LR
 
 | Container | Technology | Responsibility | Requirements |
 |---|---|---|---|
-| api-gateway | nginx 1.29 | One public port; routes by path; hides `/internal/*` | Spec endpoints span two services |
+| api-gateway | nginx 1.29 | REST on `:8080` (routes by path, hides `/internal/*`); gRPC on `:9090` (routes by gRPC service) | Spec endpoints span two services |
 | ride-service | Go | Ride lifecycle, passengers, Idempotency-Key, status history | AC-01, AC-06, AC-08 |
 | driver-service | Go | Driver status and location; **atomic reservation** | AC-02, AC-03, AC-09 |
 | dispatch-service | Go | Saga orchestrator, offers, exclusions, timeouts, matching, GEO projection | AC-04, AC-05, AC-07, AC-10 |
@@ -155,7 +157,9 @@ flowchart TB
 
 ## 6. Public API
 
-All traffic goes through the gateway on `:8080`. Errors use RFC 9457 `application/problem+json` with a stable `code` ([ADR-010](adr/ADR-010-api-and-identifiers.md)).
+All traffic goes through the gateway: **REST (v1) on `:8080`** and **gRPC (v2) on `:9090`**. REST errors use RFC 9457 `application/problem+json` with a stable `code` ([ADR-010](adr/ADR-010-api-and-identifiers.md)).
+
+### REST (v1)
 
 | Method & path | Owner | Success | Errors | AC |
 |---|---|---|---|---|
@@ -173,6 +177,19 @@ All traffic goes through the gateway on `:8080`. Errors use RFC 9457 `applicatio
 | `GET /rides/{rideId}/dispatch` | dispatch | `200` saga, offers, exclusions, steps | `404 SAGA_NOT_FOUND` | observability |
 
 **Accept is synchronous on the offer and eventual on the ride.** `200 ACCEPTED` means the offer row changed (the pivot). The ride shows `DRIVER_ACCEPTED` and the driver `BUSY` a few milliseconds later, once the saga's commands are processed.
+
+### gRPC (v2): two driver-app APIs as streams
+
+Version 2 exists only where a stream is better than request/response. Both call the **same use cases** as their REST version, so validation, state machines, events and errors are identical. Contracts: [api/proto](../api/proto/). Decision and comparison: [ADR-010 Part 6](adr/ADR-010-api-and-identifiers.md#part-6-grpc-api-v2-for-two-driver-app-apis).
+
+| RPC (gateway `:9090`) | Replaces (v1) | Shape | Behaviour | AC |
+|---|---|---|---|---|
+| `ridehail.driver.v2.DriverLocationService/StreamLocations` | `PUT /drivers/{driverId}/location` | Bidirectional stream: `LocationUpdate` in, `LocationAck` out | Each update is applied like the REST call and acknowledged with the new `version`; an invalid one gets `accepted=false` + `INVALID_COORDINATES` / `DRIVER_NOT_FOUND` and the stream stays open | 03 |
+| `ridehail.dispatch.v2.OfferService/WatchOffers` | polling `GET /drivers/{driverId}/offer` | Server stream: `WatchOffersRequest` in, `OfferEvent` out | `OFFERED` when an offer is waiting, `CLOSED` (with final status) when it is accepted, rejected, expired or cancelled, `HEARTBEAT` every 15 s. Drivers still answer with REST accept/reject | 05 |
+
+Try them: `make grpc-offers DRIVER=D001` and `make grpc-location DRIVER=D010` (grpcurl).
+
+### Internal endpoints
 
 Not exposed by the gateway: `GET /internal/drivers`, `PUT /internal/drivers/{id}` (test/demo fixtures), `POST /internal/geo/rebuild`.
 
@@ -421,7 +438,7 @@ Migrations are embedded in each service ([ride](../services/ride/internal/adapte
 | 7 | Language and libraries | Go 1.27, `net/http`, pgx, franz-go, go-redis | Java/Spring, Kotlin, .NET, Node, Python, Rust; Gin/Echo/Fiber; GORM/sqlc; sarama | [007](adr/ADR-007-language-and-libraries.md) |
 | 8 | Data stores | PostgreSQL 18, Redis 8 | MySQL, MongoDB, CockroachDB, DynamoDB, Cassandra; Valkey, Dragonfly | [008](adr/ADR-008-data-stores.md) |
 | 9 | Broker | Redpanda | Kafka, RabbitMQ, NATS JetStream, Redis Streams, Pulsar, SQS | [009](adr/ADR-009-message-broker.md) |
-| 10 | API and ids | REST + problem+json, Idempotency-Key in Postgres, UUIDv7, polling for offers | gRPC, GraphQL; Redis keys; UUIDv4, ULID, Snowflake; WebSocket/SSE | [010](adr/ADR-010-api-and-identifiers.md) |
+| 10 | API and ids | REST + problem+json (v1), gRPC streams for location and offers (v2), Idempotency-Key in Postgres, UUIDv7 | gRPC-only, GraphQL, Connect-RPC; Redis keys; UUIDv4, ULID, Snowflake; WebSocket/SSE/MQTT | [010](adr/ADR-010-api-and-identifiers.md) |
 | 11 | Testing | Unit + fakes + testcontainers + e2e + Postman + architecture test | Mocks, in-memory fakes, embedded Postgres, k6, Pact | [011](adr/ADR-011-testing-strategy.md) |
 | 12 | Code structure | Clean Architecture per service | Single package, functional core + shell, 3-layer, hexagonal, onion, vertical slice | [012](adr/ADR-012-clean-architecture.md) |
 
@@ -430,6 +447,7 @@ Migrations are embedded in each service ([ride](../services/ride/internal/adapte
 ```
 coding-challenge-3/kvp/
 ├── README.md · Makefile · docker-compose.yml · Dockerfile · go.mod
+├── api/                  proto/ gRPC contracts (API v2) · gen/ generated Go code
 ├── deploy/                 nginx gateway · Postgres init (3 DBs) · Grafana dashboard
 ├── pkg/                    shared outer-ring code, no business rules
 │   ├── geo/                Point, validation, Haversine (pure)
@@ -437,7 +455,8 @@ coding-challenge-3/kvp/
 │   ├── broker/             outbox + relay, inbox, Kafka consumer (retry, DLQ), topic admin
 │   ├── pgutil/             connect, migrations, TxManager (transaction in ctx)
 │   ├── obs/ · obs/otelsetup/   correlation + one trace per ride (OTel API) · SDK/exporters
-│   ├── httpx/ · svc/       HTTP helpers (problem+json, access log) · service bootstrap
+│   ├── httpx/ · grpcx/     HTTP helpers (problem+json, access log) · gRPC server (tracing, logging, health)
+│   ├── svc/                service bootstrap (HTTP + optional gRPC server)
 │   └── testpg/             Postgres testcontainer for integration tests
 ├── services/{ride,driver,dispatch}/
 │   ├── cmd/main.go         composition root
@@ -454,7 +473,7 @@ coding-challenge-3/kvp/
 | Area | Limitation | Impact | Next step |
 |---|---|---|---|
 | Consistency | Accept is synchronous on the offer, eventual on the ride: `200 ACCEPTED` is the saga's pivot, and the ride and driver statuses follow within milliseconds | A client reading the ride right after accepting may still see `DRIVER_ASSIGNED` | Return the expected final state, or let clients wait for `DRIVER_ACCEPTED` |
-| Driver experience | No push to drivers: drivers poll `GET /drivers/{id}/offer` (real-time delivery is out of scope) | Offer latency = poll interval | SSE or WebSocket, mobile push in production ([ADR-010](adr/ADR-010-api-and-identifiers.md)) |
+| Driver experience | REST clients poll `GET /drivers/{id}/offer`; the gRPC `WatchOffers` stream pushes, but inside dispatch-service each stream still checks the database every 500 ms; no mobile push when the app is closed | Up to 0.5 s offer latency on v2; one indexed read per open stream per tick | Postgres `LISTEN/NOTIFY` or an offers topic to wake streams; mobile push (FCM/APNs) in production ([ADR-010](adr/ADR-010-api-and-identifiers.md)) |
 | Waiting rides | A ride with no eligible driver waits in `MATCHING` until cancelled; no max-wait auto-cancel | Rides can wait forever | Auto-cancel after a configurable time |
 | Messaging | One outbox relay per service instance: per-key ordering assumes a single instance | Replicas could publish out of order | Relay leader election or CDC ([ADR-004](adr/ADR-004-messaging-outbox-inbox.md)) |
 | Messaging | Transient outages longer than the retry budget (~10 s) send messages to the DLQ | Manual `make replay-dlq` needed | Retry topics with longer delays; alert on DLQ depth |

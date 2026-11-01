@@ -229,7 +229,7 @@ The test strategy (levels, invariants, how to run) is in [testing.md](testing.md
 **Assumptions**
 
 1. Passengers `P001–P010` and drivers `D001–D020` are seeded (registration is out of scope). Tests and the demo create extra drivers through a fixture endpoint that the gateway does not expose.
-2. "Driver receives an offer" = a `PENDING` offer readable via `GET /drivers/{id}/offer` (polling). There is no push channel.
+2. "Driver receives an offer" = a `PENDING` offer readable via `GET /drivers/{id}/offer` (REST polling) or pushed on the gRPC v2 stream `OfferService/WatchOffers`. Mobile push notifications are out of scope.
 3. A ride with no eligible driver stays `MATCHING`. Retrying it (every 10 s, and immediately when a driver becomes available) is an addition beyond the ACs.
 4. `DRIVER_ACCEPTED → CANCELLED` is allowed, as the spec's cancellation diagram shows, and releases a `BUSY` driver.
 5. Offer expiry uses the database clock, so clock skew between services does not matter.
@@ -245,6 +245,6 @@ Run on 2026-11-01 (Colima, Apple Silicon), after the Clean Architecture refactor
 |---|---|---|
 | Unit + architecture | `make test` | 32 tests in 6 packages ✅ |
 | Integration (testcontainers: Postgres 18, Redis 8) | `make test-int` | 23 tests in 4 packages ✅ |
-| End-to-end (gateway, incl. the real 30 s timeout) | `make test-e2e` | 8 tests ✅ (~36 s) |
+| End-to-end (gateway REST + gRPC, incl. the real 30 s timeout) | `make test-e2e` | 11 tests ✅ (~37 s) |
 | Postman / newman | `make postman` | 119 requests, 247 assertions, 0 failed ✅ |
 | Architecture rules | part of `make test` | domain pure; no infrastructure in inner rings; adapters independent ✅ |

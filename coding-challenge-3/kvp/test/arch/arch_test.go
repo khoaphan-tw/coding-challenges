@@ -43,6 +43,9 @@ var infrastructure = []string{
 	"ridehail/pkg/pgutil",
 	"ridehail/pkg/svc",
 	"ridehail/pkg/httpx",
+	"ridehail/pkg/grpcx",
+	"google.golang.org/grpc", // gRPC transport belongs in adapter/grpc
+	"ridehail/api/gen",       // generated gRPC/protobuf code
 }
 
 func TestDomainIsPure(t *testing.T) {

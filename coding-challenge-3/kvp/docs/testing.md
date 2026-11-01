@@ -19,7 +19,7 @@ How the system is tested, what each level proves, and the invariants the tests p
 | Unit: use cases | Ride flows via fakes of the ports: idempotency, duplicate commands, rejection replies | `go test` | 5 | `make test` | Go |
 | Architecture | Clean Architecture dependency rule | `go test` + `go list` | 4 | `make test` | Go |
 | Integration | Real Postgres 18 / Redis 8 (testcontainers): atomic reservation, idempotent create, saga flows, GEO versioning | `go test -tags integration` | 23 | `make test-int` | Colima |
-| End-to-end | Whole stack through nginx, Redpanda, Redis, Postgres | `go test -tags e2e` | 8 | `make test-e2e` | `make up` |
+| End-to-end | Whole stack through nginx (REST and gRPC), Redpanda, Redis, Postgres | `go test -tags e2e` | 11 | `make test-e2e` | `make up` |
 | Scenario / exploratory | 12 readable scenario folders with assertions | Postman / newman | 119 requests, 247 assertions | `make postman` | `make up`, Node |
 | Demo | Logged walkthrough (every request/response) | bash + curl | — | `make demo` | `make up` |
 
@@ -35,7 +35,7 @@ How the system is tested, what each level proves, and the invariants the tests p
 | `services/driver/internal/adapter/postgres` | integration | `TestConcurrentReservationOnlyOneWins`, `TestSecondReservationIsRejectedWithReply`, `TestDriverStatusLifecycle`, `TestRejectBeforeAcceptReturnsAvailable`, `TestEveryChangeEmitsVersionedEvent`, `TestDuplicateCommandIsProcessedOnce` |
 | `services/dispatch/internal/usecase` | integration | `TestNearestDriverGetsOfferAndAcceptMovesForward`, `TestRejectionRematchesAndExcludesTheDriverForever`, `TestTimeoutIsTreatedAsRejection`, `TestDuplicateRideRequestedStartsOneSaga`, `TestDuplicateAcceptIsIdempotent`, `TestOnlyTheOfferedDriverCanRespond`, `TestAcceptRacingTimeoutHasOneWinner`, `TestTwoRidesCannotOfferTheSameDriver`, `TestCancelReleasesTheOfferedDriver`, `TestCompletionReleasesTheDriver` |
 | `services/dispatch/internal/adapter/redis` | integration | `TestIndexKeepsOnlyLatestAvailableDrivers` |
-| `test/e2e` | end-to-end | `TestHappyPath`, `TestRejectRematchesToNextDriver`, `TestDuplicateRideCreation`, `TestDuplicateAcceptKeepsValidState`, `TestConcurrentRidesCannotShareADriver`, `TestCancelReleasesOfferedDriver`, `TestInvalidRequests`, `TestOfferTimeoutRematches` |
+| `test/e2e` | end-to-end | `TestHappyPath`, `TestRejectRematchesToNextDriver`, `TestDuplicateRideCreation`, `TestDuplicateAcceptKeepsValidState`, `TestConcurrentRidesCannotShareADriver`, `TestCancelReleasesOfferedDriver`, `TestInvalidRequests`, `TestOfferTimeoutRematches`; gRPC v2: `TestGRPCStreamLocationsUpdatesDriver`, `TestGRPCWatchOffersPushesOfferAndClose`, `TestGRPCWatchOffersRequiresDriverID` |
 
 ## 3. Invariants and the tests that protect them
 

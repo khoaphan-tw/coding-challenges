@@ -1,4 +1,4 @@
-# ADR-010: API style, idempotency keys and identifiers: REST + problem+json, Idempotency-Key in Postgres, UUIDv7
+# ADR-010: API style, idempotency keys and identifiers: REST + problem+json (v1), gRPC streams for two driver APIs (v2), Idempotency-Key in Postgres, UUIDv7
 
 * **Status:** Accepted
 * **Date:** 2026-11-01
@@ -10,7 +10,7 @@
 | Option | Pros | Cons | Verdict |
 |---|---|---|---|
 | **REST + JSON over HTTP/1.1** | The challenge's example endpoints are REST; works with curl and Postman; easy to log and debug | Weaker typing (no schema in code) | ✅ **Chosen** |
-| gRPC (protobuf) | Strong contracts, streaming, fast | Needs codegen and tooling for clients; poor curl/Postman story; gateway transcoding needed for browsers | ❌ For the public API; a candidate for internal sync calls |
+| gRPC (protobuf) | Strong contracts, streaming, fast | Needs codegen and tooling for clients; poor curl/Postman story; gateway transcoding needed for browsers | ❌ As the *only* public API. ✅ As v2 for the two driver-app APIs that are streams by nature ([Part 6](#part-6-grpc-api-v2-for-two-driver-app-apis)) |
 | GraphQL | Flexible reads | Mutations with idempotency and state machines gain nothing; extra server | ❌ |
 | Connect-RPC / Twirp | gRPC-compatible, works over HTTP/JSON | Extra codegen | ❌ |
 
@@ -55,7 +55,8 @@ Seeded records keep readable ids (`P001`, `D001`) as in the challenge's examples
 
 | Option | Pros | Cons | Verdict |
 |---|---|---|---|
-| **Polling `GET /drivers/{id}/offer`** | Zero infrastructure; testable with curl and Postman | Latency = poll interval; wasted requests | ✅ **Chosen** (real-time push is out of scope) |
+| **Polling `GET /drivers/{id}/offer`** | Zero infrastructure; testable with curl and Postman | Latency = poll interval; wasted requests | ✅ **v1** (simple, required by the challenge's REST style) |
+| **gRPC server stream `OfferService/WatchOffers`** | One connection; offers pushed within ~0.5 s; typed contract; works on mobile with HTTP/2 | Needs a gRPC client; long-lived connections through the gateway | ✅ **v2** ([Part 6](#part-6-grpc-api-v2-for-two-driver-app-apis)) |
 | WebSocket | Real-time, bidirectional | Connection management, sticky sessions | Future |
 | Server-Sent Events | Real-time, simple, HTTP | One-way; proxies may buffer | Future (simplest push) |
 | Mobile push (FCM / APNs) | Works when the app is backgrounded | Needs credentials and devices | Production |
@@ -64,5 +65,46 @@ Seeded records keep readable ids (`P001`, `D001`) as in the challenge's examples
 ## Part 5: versioning
 
 * Messages: the topic name carries the version (`ride.events.v1`) and every envelope has `schemaVersion`.
-* HTTP: unversioned paths, as in the challenge's examples. A breaking change would add `/v2/...` or a media type version.
+* HTTP (v1): unversioned paths, as in the challenge's examples. A breaking change would add `/v2/...` or a media type version.
+* gRPC (v2): the protobuf package carries the version (`ridehail.driver.v2`, `ridehail.dispatch.v2`); fields are only added, never renumbered.
 * Schemas: plain JSON with Go structs. A schema registry (Avro/Protobuf with Redpanda's built-in registry) is the next step when more teams consume the topics.
+
+## Part 6: gRPC API v2 for two driver-app APIs
+
+**Question:** should the API use gRPC instead of REST?
+
+**Answer: not instead, but next to it, for two APIs only.** gRPC adds code generation, an HTTP/2-only gateway route and clients that curl and Postman's collection format cannot drive. That cost pays off only where gRPC's main advantage, **streaming over one long-lived connection**, matters. For one-shot commands (create ride, accept, cancel) REST is simpler and the challenge specifies it.
+
+| API | Calls per driver | Fit for gRPC | Decision |
+|---|---|---|---|
+| `PUT /drivers/{id}/location` | Every 4–5 s while online (250k/s at 1M drivers, [scalability](../scalability.md)) | ✅ A stream is the natural shape: one connection, no per-update HTTP request/headers/TLS cost, per-update acks | **v2: `DriverLocationService/StreamLocations`** (bidirectional stream) |
+| `GET /drivers/{id}/offer` (polling) | Every 1–2 s while waiting | ✅ Server push replaces polling: lower latency, no empty requests | **v2: `OfferService/WatchOffers`** (server stream) |
+| `POST /rides` | Once per ride | ❌ One-shot; `Idempotency-Key` is an HTTP idiom | REST only |
+| accept / reject / cancel / complete | Once per action | ❌ One-shot commands | REST only |
+| Internal service-to-service | Almost all asynchronous via Redpanda; one rare sync call (GEO rebuild) | ❌ No hot sync path to optimise | Not needed |
+
+**Options for the v2 transport:**
+
+| Option | Pros | Cons | Verdict |
+|---|---|---|---|
+| **gRPC streams (HTTP/2, protobuf)** | Typed contract in `.proto`; bidirectional and server streaming; one connection; flow control; first-class Go support; OpenTelemetry instrumentation (`otelgrpc`) | Codegen; browsers need gRPC-Web; nginx needs a separate HTTP/2 listener | ✅ **Chosen** |
+| WebSocket + JSON | Works in browsers; simple | No contract or codegen; hand-made framing, acks and reconnection | ❌ |
+| Server-Sent Events | Simplest push over HTTP/1.1 | One direction only (no location upload) | Good for offers alone, not for locations |
+| MQTT | Built for mobile telemetry | Another broker to run | ❌ |
+| Connect-RPC | gRPC-compatible and also plain HTTP/JSON | Extra library; less common than gRPC | Valid alternative |
+
+**How it is built**
+
+* Contracts: [api/proto/ridehail/driver/v2/location.proto](../../api/proto/ridehail/driver/v2/location.proto), [api/proto/ridehail/dispatch/v2/offers.proto](../../api/proto/ridehail/dispatch/v2/offers.proto). Package names carry the version (`ridehail.driver.v2`). Generated Go code is committed in `api/gen` (`make proto` regenerates it).
+* Each service gets a new **driving adapter** `internal/adapter/grpc` that calls the *same use case* as the REST handler (Clean Architecture, [ADR-012](ADR-012-clean-architecture.md)). The architecture test treats gRPC as infrastructure that inner layers must not import.
+* `pkg/grpcx` adds tracing (`otelgrpc`), a log line per stream and per message (with `trace_id`, `driver_id` and the message as JSON, like HTTP bodies), the standard gRPC health service and server reflection.
+* Gateway: nginx listens on `:9090` with HTTP/2 and routes by gRPC service name (`/ridehail.driver.v2.DriverLocationService/` → driver-service, `/ridehail.dispatch.v2.OfferService/` → dispatch-service). Stream timeouts are raised to 1 h; `WatchOffers` sends a `HEARTBEAT` every 15 s so idle streams survive proxies.
+* `WatchOffers` push: each open stream checks the driver's pending offer every 500 ms inside dispatch-service (one indexed read). The network polling of v1 is gone; replacing the in-service check with Postgres `LISTEN/NOTIFY` or an offers topic is the next step at scale.
+* Errors: `StreamLocations` reports a bad update **in its ack** (`accepted=false`, `error_code` with the REST codes) instead of failing the stream, so one bad GPS fix does not disconnect the driver. Request-level errors use gRPC status codes (`INVALID_ARGUMENT` for a missing `driver_id`).
+
+**Consequences**
+
+* ✅ The two highest-frequency driver calls use one connection each; offers arrive without polling.
+* ✅ v1 stays unchanged; clients move per endpoint.
+* ⚠️ Two API styles to document and test (proto files + OpenAPI). gRPC is covered by e2e tests and `grpcurl`, not by the Postman collection.
+* ⚠️ Long-lived streams pin a driver to one service instance; scaling out needs connection-aware load balancing (L7 gRPC balancing in the gateway).

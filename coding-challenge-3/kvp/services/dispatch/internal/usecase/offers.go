@@ -150,6 +150,11 @@ func (o *Orchestrator) PendingOffer(ctx context.Context, driverID string) (*doma
 	return o.Offers.PendingForDriver(ctx, driverID)
 }
 
+// Offer returns one offer by id (ErrOfferNotFound if unknown).
+func (o *Orchestrator) Offer(ctx context.Context, id string) (domain.Offer, error) {
+	return o.Offers.Get(ctx, id)
+}
+
 // View is the dispatch state of a ride (GET /rides/{id}/dispatch).
 type View struct {
 	Saga       domain.Saga

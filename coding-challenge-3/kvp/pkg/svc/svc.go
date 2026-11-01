@@ -1,6 +1,6 @@
 // Package svc is the common bootstrap of every service: config, telemetry,
-// Postgres + migrations, Redpanda topics, outbox relay, HTTP server and
-// graceful shutdown.
+// Postgres + migrations, Redpanda topics, outbox relay, HTTP server, the
+// optional gRPC server and graceful shutdown.
 package svc
 
 import (
@@ -18,8 +18,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"google.golang.org/grpc"
 
 	"ridehail/pkg/broker"
+	"ridehail/pkg/grpcx"
 	"ridehail/pkg/httpx"
 	"ridehail/pkg/messaging"
 	"ridehail/pkg/obs/otelsetup"
@@ -57,6 +59,8 @@ type Runtime struct {
 	Producer *kgo.Client
 	Brokers  []string
 	Mux      *http.ServeMux
+	// GRPC serves on GRPC_ADDR (default :9090) when a service registers on it.
+	GRPC *grpc.Server
 
 	ctx context.Context
 	wg  sync.WaitGroup
@@ -127,12 +131,18 @@ func Run(name string, migrations []fs.FS, setup func(ctx context.Context, rt *Ru
 		fail("topic setup failed", err)
 	}
 
-	rt := &Runtime{Name: name, Pool: pool, Producer: producer, Brokers: brokers, Mux: http.NewServeMux(), ctx: ctx}
+	rt := &Runtime{Name: name, Pool: pool, Producer: producer, Brokers: brokers, Mux: http.NewServeMux(),
+		GRPC: grpcx.NewServer(), ctx: ctx}
 	relay := &broker.Relay{Pool: pool, Client: producer, Interval: Duration("OUTBOX_POLL_INTERVAL", 50*time.Millisecond)}
 	rt.Go("outbox relay", func(ctx context.Context) error { relay.Run(ctx); return nil })
 
 	if err := setup(ctx, rt); err != nil {
 		fail("service setup failed", err)
+	}
+
+	if grpcx.HasServices(rt.GRPC) {
+		grpcAddr := Env("GRPC_ADDR", ":9090")
+		rt.Go("grpc server", func(ctx context.Context) error { return grpcx.Serve(ctx, rt.GRPC, grpcAddr) })
 	}
 
 	addr := Env("HTTP_ADDR", ":8080")
