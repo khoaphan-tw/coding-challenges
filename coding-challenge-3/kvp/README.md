@@ -10,7 +10,7 @@ Built for [Coding Challenge #3](../coding-challenge-3.md) as **three Go microser
 | **Quality** | golangci-lint + OpenAPI lint clean; GitHub Actions CI runs lint → tests → full-stack e2e on every push → [CI](#3-how-to-test) |
 | **Tests** | 32 unit + architecture, 23 integration (real Postgres/Redis), 12 end-to-end (REST + gRPC + OpenAPI contract), 56 Postman requests / 115 checks, all green → [testing](docs/testing.md) |
 | **Design** | C4 architecture, 8 sequence flows, 14 design patterns explained, 12 ADRs that explain each choice → [documentation](#6-documentation) |
-| **Run it** | Using `make up && make demo` | → details in [local-development](docs/local-development.md)
+| **Run it** | `make up && make demo` → details in [local-development](docs/local-development.md) |
 
 ## Contents
 
