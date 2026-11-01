@@ -1,0 +1,6 @@
+docs
+test
+scripts
+deploy
+*.md
+.git
