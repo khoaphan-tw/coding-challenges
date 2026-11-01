@@ -299,7 +299,7 @@ Location updates grow to **250,000 writes/s at 1M drivers**, while dispatch stay
 | **B2** one Redis GEO key | **S2** GEO sharded by H3 cell + area-owned dispatchers | **T2** Redis projection (fast, slightly stale) vs fresh DB reads |
 | **B3** hot zones: many rides chase the same drivers | **S5** batch matching per hot cell | **T3** greedy nearest vs global assignment |
 
-Plus B4–B6, S3/S4/S6, T4/T5, the 1k → 100k → 1M evolution and the seven topics the challenge lists (location storage, matching, DB, broker, workers, caching, partitioning): [docs/scalability.md](docs/scalability.md).
+How each of the seven topics the challenge lists (location storage, matching, database, broker, dispatch workers, caching, partitioning) evolves from 1k → 100k → 1M drivers: [scalability §3](docs/scalability.md#3-topic-by-topic). All 6 bottlenecks, 6 strategies and 5 trade-offs: [docs/scalability.md](docs/scalability.md).
 
 ---
 
