@@ -10,7 +10,7 @@ Built for [Coding Challenge #3](../coding-challenge-3.md) as **three Go microser
 | **Quality** | golangci-lint + OpenAPI lint clean; GitHub Actions CI runs lint → tests → full-stack e2e on every push → [CI](#3-how-to-test) |
 | **Tests** | 32 unit + architecture, 23 integration (real Postgres/Redis), 12 end-to-end (REST + gRPC + OpenAPI contract), 56 Postman requests / 115 checks, all green → [testing](docs/testing.md) |
 | **Design** | C4 architecture, 8 sequence flows, 14 design patterns explained, 12 ADRs that explain each choice → [documentation](#6-documentation) |
-| **Run it** | `make up && make demo` |
+| **Run it** | Using `make up && make demo` | → details in [local-development](docs/local-development.md)
 
 ## Contents
 
@@ -41,9 +41,11 @@ Built for [Coding Challenge #3](../coding-challenge-3.md) as **three Go microser
 
 ## 1. Team Members
 
-1. Khoa Phan (_Developer_): khoa.phan@thoughtworks.com
-2. Duy Phuong Nguyen (_Developer_): phuong.nguyen@thoughtworks.com
-3. Victor Nguyen (_Developer_): victor.nguyen@thoughtworks.com
+KVP (Khoa Vinh Phuong): Three Minds, Thousands of Debates, One Mission 🏆
+
+1. **Khoa Phan**  (_Developer_): khoa.phan@thoughtworks.com
+2. **Victor Nguyen** (_Developer_): victor.nguyen@thoughtworks.com
+3. **Duy Phuong Nguyen** (_Developer_): phuong.nguyen@thoughtworks.com
 
 ---
 
