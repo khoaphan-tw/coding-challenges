@@ -8,7 +8,7 @@ Built for [Coding Challenge #3](../coding-challenge-3.md) as **three Go microser
 |---|---|
 | **Requirements** | All 10 acceptance criteria and every §5 evaluation item are met and traced to code and tests → [requirements traceability](docs/requirements-traceability.md) |
 | **Tests** | 32 unit + architecture, 23 integration (real Postgres/Redis), 8 end-to-end, 119 Postman requests / 247 assertions, all green → [testing](docs/testing.md) |
-| **Design** | C4 architecture, 8 sequence flows, 13 ADRs that each compare alternatives → [docs](docs/README.md) |
+| **Design** | C4 architecture, 8 sequence flows, 14 design patterns explained, 13 ADRs that each compare alternatives → [documentation](#documentation) |
 | **Run it** | `make up && make demo` |
 
 ## Contents
@@ -17,13 +17,8 @@ Built for [Coding Challenge #3](../coding-challenge-3.md) as **three Go microser
 2. [How to Run](#how-to-run)
 3. [How to Test](#how-to-test)
 4. [Approach](#approach): [architecture](#architecture) · [dispatch flow](#how-a-ride-is-dispatched) · [code structure](#code-structure) · [requirements coverage](#requirements-coverage) · [matching](#matching-strategy) · [concurrency](#concurrency-strategy) · [idempotency](#idempotency-strategy) · [event-driven](#event-driven-dispatch) · [observability](#observability) · [scalability](#scalability)
-5. [Design Decisions](#design-decisions)
-6. [Known Limitations](#known-limitations)
-7. [Challenges Faced](#challenges-faced)
-8. [What We Learned](#what-we-learned)
-9. [With More Time, We Would...](#with-more-time-we-would)
-10. [AI Tools Used](#ai-tools-used)
-11. [Documentation](#documentation)
+5. [Design Decisions](#design-decisions): [tech stack](#why-this-tech-stack) · [trade-offs](#what-trade-offs-did-we-make) · [patterns](#what-patterns-did-we-use)
+6. [Documentation](#documentation): [reading paths](#reading-paths) · [all documents](#all-documents)
 
 ---
 
@@ -296,78 +291,53 @@ Plus B4–B6, S3/S4/S6, T4/T5, the 1k → 100k → 1M evolution and the seven to
 
 ### What patterns did we use?
 
-Saga orchestration with compensations and a pivot · transactional outbox · idempotent consumer (inbox) · idempotency key with stored response · explicit state machines · compare-and-set in SQL · semantic locks (`OFFERED`, `DRIVER_ASSIGNED`) · CQRS-style read model (GEO projection) · database per service · API gateway · Clean Architecture with ports, adapters and a composition root · unit of work via a transaction port · retry with backoff + jitter and a dead-letter queue · correlation/causation ids and one trace per long-running journey.
+Fourteen patterns, grouped by the problem they solve. Each one is explained in **[docs/patterns.md](docs/patterns.md)**: the problem, how it works here, the code, what breaks without it, its cost, and the tests that prove it.
 
----
+| Group | Pattern | What it does here | Where |
+|---|---|---|---|
+| **Distributed workflow** | [P1 Saga orchestration with compensations and a pivot](docs/patterns.md#p1-saga-orchestration-with-compensations-and-a-pivot) | dispatch-service drives each ride through local transactions in three services. Before the driver accepts (the **pivot**), every step can be undone (release driver, unassign ride); after it, steps are only retried. Workers expire offers, retry waiting rides and resume stuck sagas | `dispatch/internal/usecase` |
+| | [P2 Semantic locks](docs/patterns.md#p2-semantic-locks) | Driver `OFFERED`/`BUSY` and ride `DRIVER_ASSIGNED` mark records as "in a saga", with an owner (`current_ride_id`, `current_offer_id`), so other sagas skip them and stale releases do nothing | driver and ride state |
+| **Reliable messaging** | [P3 Transactional outbox](docs/patterns.md#p3-transactional-outbox) | Messages are inserted in the same transaction as the state change; a relay publishes them. No lost or phantom events | `pkg/broker/outbox.go` |
+| | [P4 Idempotent consumer (inbox)](docs/patterns.md#p4-idempotent-consumer-inbox) | Each consumer records `(consumer, event_id)` in the same transaction as its work; copies are skipped | `pkg/broker` `Claim` |
+| | [P5 Retry + backoff + jitter, dead-letter queue](docs/patterns.md#p5-retry-with-exponential-backoff--jitter-and-a-dead-letter-queue) | 5 attempts, 100 ms → 5 s with random jitter, then `<topic>.dlq`; `make replay-dlq` re-publishes | `pkg/broker/consumer.go` |
+| **Concurrency and duplicates** | [P6 Compare-and-set in SQL](docs/patterns.md#p6-compare-and-set-in-sql) | `UPDATE … WHERE status='AVAILABLE'` / `'PENDING'`: the affected row count decides who won. Fixed lock order (saga → offer) | driver and dispatch postgres adapters |
+| | [P7 Explicit state machines](docs/patterns.md#p7-explicit-state-machines) | Pure functions return *changed*, *duplicate (no-op)* or *invalid (409)*; every change is stored in a history table | `*/internal/domain` |
+| | [P8 Idempotency key with stored response](docs/patterns.md#p8-idempotency-key-with-stored-response) | `POST /rides` stores key + request hash + response in the ride's transaction; a retry gets the same ride, a reused key with another body gets `422` | `ride/internal/usecase/rides.go` |
+| **Data ownership and reads** | [P9 Database per service](docs/patterns.md#p9-database-per-service) | `ride_db`, `driver_db`, `dispatch_db`, each with its own user, outbox and inbox | `deploy/postgres/init.sql` |
+| | [P10 CQRS-style read model](docs/patterns.md#p10-cqrs-style-read-model-geo-projection) | Driver events build a Redis GEO set of `AVAILABLE` drivers (versioned, so old events are ignored). Redis suggests, Postgres decides | `dispatch/internal/usecase/projection.go` |
+| | [P11 API gateway](docs/patterns.md#p11-api-gateway) | nginx routes by path to the owning service and hides `/internal/*` | `deploy/nginx.conf` |
+| **Code structure** | [P12 Clean Architecture](docs/patterns.md#p12-clean-architecture-ports-adapters-and-a-composition-root) | domain → use cases (with ports) → adapters; `cmd/main.go` wires them; a test enforces the dependency rule | `services/*`, `test/arch` |
+| | [P13 Unit of work via a transaction port](docs/patterns.md#p13-unit-of-work-via-a-transaction-port) | `TxManager.WithinTx(ctx, fn)`: lock, state, history, outbox and inbox commit together, with no pgx in use cases | `pkg/pgutil` |
+| **Observability** | [P14 Correlation/causation ids, one trace per journey](docs/patterns.md#p14-correlationcausation-ids-and-one-trace-per-long-running-journey) | Every message carries `correlationId` (ride) and `causationId` (the message that caused it); the ride's `traceparent` is stored so every later step joins one trace | `pkg/obs`, `pkg/messaging` |
 
-## Known Limitations
-
-* **Accept is synchronous on the offer, eventual on the ride:** `200 ACCEPTED` is the pivot; ride and driver statuses follow within milliseconds.
-* **No push to drivers:** drivers poll `GET /drivers/{id}/offer` (real-time delivery is out of scope).
-* **Waiting rides wait until cancelled:** no max-wait auto-cancel.
-* **One outbox relay per service instance:** per-key ordering assumes one instance; replicas need relay leader election or CDC.
-* **Transient outages longer than the retry budget (~10 s) send messages to the DLQ**, which then need `make replay-dlq`.
-* **No cleanup jobs** for inbox, published outbox rows or old idempotency keys.
-* **Redis loss at runtime:** automatic rebuild only on dispatch start (otherwise `make rebuild-geo`); the Lua script is single-node, not cluster-safe as written.
-* **Stage-1 storage:** each location update is a Postgres write; one Postgres server hosts all three databases.
-* **No authentication**; fixture endpoints (`/internal/*`) are reachable only on service ports, not via the gateway.
-* **Not load-tested;** alerts are documented but not wired.
-
----
-
-## Challenges Faced
-
-| Challenge | What happened | How we solved it |
-|---|---|---|
-| Docker without Docker Desktop | `docker compose` was an "unknown command"; testcontainers could not find the Colima socket | `cliPluginsExtraDirs` in `~/.docker/config.json`; `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` in the Makefile |
-| A restarted service stopped consuming for ~45 s | With franz-go's `BlockRebalanceOnPoll`, `Close()` blocks unless `AllowRebalance()` comes first; the container was killed before leaving its consumer group | `AllowRebalance()` before `Close()`; 10 s session timeout |
-| Gateway 404s after a rebuild | nginx resolves upstream names once at start-up | Upstreams as variables + Docker DNS resolver |
-| Potential deadlock | The timeout sweeper locked offer → saga while accept locked saga → offer | One lock order everywhere (saga → offer) + `SKIP LOCKED` |
-| One ride = many traces | Accept/reject calls, timeouts and retries each started a new trace | Store the creating request's `traceparent` with the ride; later steps continue it, with a span link |
-| One transaction across Clean Architecture layers | Use cases must not see pgx, yet lock + state + history + outbox must commit together | A `TxManager.WithinTx(ctx, fn)` port; repositories and the outbox join the transaction in `ctx` |
-| Hidden infrastructure in inner layers | Shared packages silently pulled the Kafka client and OTel SDK into use cases | Split pure contracts from infrastructure; an architecture test now fails on such leaks |
-| Flaky e2e test | It acted when the driver was `OFFERED`, sometimes before the offer row existed | Wait for `DRIVER_ASSIGNED` (offer exists) first |
-
-## What We Learned
-
-* **The database is the best lock.** One conditional `UPDATE` and its row count beat any distributed lock for "only one may win", and they survive crashes.
-* **Exactly-once is a property of the handler, not the broker.** At-least-once delivery + an inbox + idempotent state machines is simple and robust.
-* **Sagas need a pivot.** Deciding what can still be undone (reserve, assign) and what only moves forward (after accept) made every failure case easy to reason about.
-* **Long flows need deliberate observability.** Per-request tracing splits a minutes-long journey; one trace per ride and correlated logs fixed it.
-* **Architecture rules are worth enforcing in code.** The dependency test found real leaks that code review missed.
-* **A modular monolith would have been enough** for 1,000 drivers; microservices earn their cost only on the location path at 100k+ drivers.
-
-## With More Time, We Would...
-
-* Move the saga to **Temporal** if more workflows appear (payments, scheduled rides).
-* Build the **location fast path** and **GEO sharding by H3 cell** (S1, S2).
-* Replace outbox polling with **CDC**; add relay leader election for replicas.
-* Add **cleanup jobs**, a max-wait auto-cancel, and **push** offers (SSE/WebSocket).
-* **Batch matching** in hot zones; **k6 load tests**; wired **alerts**; fake-based use-case tests for driver and dispatch too.
-* Follow **TDD** with a visible red → green → refactor history.
-
-## AI Tools Used
-
-* **An AI coding assistant** in VS Code:
-  * **Design:** a system-design workflow (requirements → estimates → architecture → trade-offs → failure modes); drafted the ADRs and comparison tables. We set the constraints (microservices + saga, Go, Redis GEO + Redpanda + Postgres, Colima) and reviewed the decisions.
-  * **Implementation:** generated most of the Go code, SQL, Docker/Compose files, scripts and the Postman collection, iterating against the running stack; later refactored the services to Clean Architecture.
-  * **Testing and debugging:** wrote the unit, integration and e2e tests; found and fixed the consumer-group shutdown bug, the gateway DNS issue, a lock-ordering risk and a flaky test by running the system and reading its logs and traces.
-  * **Documentation:** this README and `docs/`.
-* **What we checked ourselves:** requirement coverage against the ACs, the trade-offs, and the final review of code and docs. Every claim in the docs (tests, recovery, traces) was verified by running it.
+How they combine on a single accept call, and the patterns we decided **not** to use (2PC, choreography, event sourcing, distributed locks, …): [patterns §9–10](docs/patterns.md#9-how-the-patterns-work-together-one-driver-accepts).
 
 ---
 
 ## Documentation
 
-**Start here:** [docs/README.md](docs/README.md) has reading paths for reviewers, developers and on-call engineers.
+All detailed documents are in [docs/](docs/). The challenge requires [architecture.md](docs/architecture.md), [sequence-diagram.md](docs/sequence-diagram.md), [ADR-001](docs/adr/ADR-001-matching.md) and [ADR-002](docs/adr/ADR-002-concurrency.md) by name; the rest add detail.
 
-| Document | Answers |
+### Reading paths
+
+| You are… | Read in this order | Time |
+|---|---|---|
+| **A reviewer checking the requirements** | [requirements-traceability.md](docs/requirements-traceability.md): every AC bullet → mechanism → code → tests → how to verify, plus the latest test run | 15 min |
+| **Someone who wants to understand the design** | [architecture.md](docs/architecture.md) → [sequence-diagram.md](docs/sequence-diagram.md) → [patterns.md](docs/patterns.md) → [ADR-002](docs/adr/ADR-002-concurrency.md), [ADR-003](docs/adr/ADR-003-saga-orchestration.md), [ADR-004](docs/adr/ADR-004-messaging-outbox-inbox.md) | 40 min |
+| **A developer running or changing the code** | [local-development.md](docs/local-development.md) → [architecture §4 and §14](docs/architecture.md#4-inside-a-service-clean-architecture-c4-level-3) → [ADR-013](docs/adr/ADR-013-clean-architecture.md) → [testing.md](docs/testing.md) | 20 min |
+| **An engineer investigating a ride** | [observability.md](docs/observability.md) (`make trace-ride`, `make trace-logs`, Tempo, Grafana) | 10 min |
+| **Thinking about growth and limits** | [scalability.md](docs/scalability.md) → [known limitations](docs/architecture.md#15-known-limitations) | 15 min |
+
+### All documents
+
+| Document | What it answers |
 |---|---|
-| [requirements-traceability.md](docs/requirements-traceability.md) | Is every requirement met, where, and how is it proven? |
-| [architecture.md](docs/architecture.md) | How is it built? (C4 views, API, state machines, saga, messages, data model, failures, decisions) |
-| [sequence-diagram.md](docs/sequence-diagram.md) | What happens step by step, including races and crashes? |
-| [testing.md](docs/testing.md) | How is it tested, and which invariants do the tests protect? |
-| [scalability.md](docs/scalability.md) | How does it grow from 1k to 1M drivers? |
-| [observability.md](docs/observability.md) | What happened to ride R001? |
-| [local-development.md](docs/local-development.md) | How do I install, run, demo and test it? |
+| [requirements-traceability.md](docs/requirements-traceability.md) | Is every requirement met, where, and how is it proven? (AC-01…AC-10, §5 evaluation items, team constraints, assumptions, test evidence) |
+| [architecture.md](docs/architecture.md) | How is it built? (C4 context/containers/components, glossary, API, state machines, saga, message catalogue, data model, consistency, failure modes, decisions, repository layout, **known limitations**) |
+| [sequence-diagram.md](docs/sequence-diagram.md) | What happens step by step? (happy path, rematch, timeout, two-ride race, duplicates, cancel races, location → GEO index, crash recovery) |
+| [patterns.md](docs/patterns.md) | Which design patterns are used, why, where in the code, at what cost, and how they work together? |
+| [testing.md](docs/testing.md) | How is it tested? (levels, every test, invariants, how the integration tests work, gaps) |
+| [scalability.md](docs/scalability.md) | How does it grow from 1k to 1M drivers? (load model, evolution, the 7 topics, 6 bottlenecks, 6 strategies, 5 trade-offs) |
+| [observability.md](docs/observability.md) | What happened to ride R001? (log format, trace-by-id, one trace per ride, dashboard, alerts) |
+| [local-development.md](docs/local-development.md) | How do I install, run, demo and test it on a Mac with Colima? (incl. Postman, config, troubleshooting) |
 | [adr/](docs/adr/README.md) | Why each decision, compared with the alternatives (13 ADRs) |
