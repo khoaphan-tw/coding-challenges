@@ -4,7 +4,7 @@ COMPOSE := docker compose
 # testcontainers + Colima: use the socket path as seen from inside the VM.
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE ?= /var/run/docker.sock
 
-.PHONY: help up down clean ps logs build test test-int test-e2e test-all vet trace-ride trace-logs demo postman postman-gen proto grpc-offers grpc-location rebuild-geo replay-dlq psql
+.PHONY: help up down clean ps logs build test test-int test-e2e test-all vet trace-ride trace-logs demo postman postman-gen proto openapi-lint grpc-offers grpc-location rebuild-geo replay-dlq psql
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -59,6 +59,9 @@ postman-gen: ## Regenerate the Postman collection from scripts/gen-postman.py
 proto: ## Regenerate gRPC code from api/proto (needs protoc, protoc-gen-go, protoc-gen-go-grpc)
 	PATH="$$PATH:$$(go env GOPATH)/bin" protoc -I api/proto --go_out=. --go_opt=module=ridehail \
 	  --go-grpc_out=. --go-grpc_opt=module=ridehail $$(find api/proto -name '*.proto')
+
+openapi-lint: ## Lint the REST contract api/openapi.yaml (needs Node)
+	npx -y @redocly/cli@1.34.5 lint --config api/redocly.yaml api/openapi.yaml
 
 GRPCURL := grpcurl -plaintext -import-path api/proto
 

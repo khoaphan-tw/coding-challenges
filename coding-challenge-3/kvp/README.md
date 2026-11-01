@@ -7,7 +7,7 @@ Built for [Coding Challenge #3](../coding-challenge-3.md) as **three Go microser
 | | |
 |---|---|
 | **Requirements** | All 10 acceptance criteria and every §5 evaluation item are met and traced to code and tests → [requirements traceability](docs/requirements-traceability.md) |
-| **Tests** | 32 unit + architecture, 23 integration (real Postgres/Redis), 11 end-to-end (REST + gRPC), 56 Postman requests / 115 checks, all green → [testing](docs/testing.md) |
+| **Tests** | 32 unit + architecture, 23 integration (real Postgres/Redis), 12 end-to-end (REST + gRPC + OpenAPI contract), 56 Postman requests / 115 checks, all green → [testing](docs/testing.md) |
 | **Design** | C4 architecture, 8 sequence flows, 14 design patterns explained, 12 ADRs that each compare alternatives → [documentation](#documentation) |
 | **Run it** | `make up && make demo` |
 
@@ -52,6 +52,7 @@ make up          # build + start all 10 containers, waits until healthy (~30 s a
 |---|---|
 | http://localhost:8080 | **REST API v1** (gateway) |
 | localhost:9090 | **gRPC API v2** (gateway): driver location stream and offer push, see [below](#grpc-api-v2) |
+| http://localhost:8080/docs/ | **Swagger UI**: the REST contract [api/openapi.yaml](api/openapi.yaml), with "Try it out" |
 | http://localhost:3000 | Grafana → Dashboards → *Dispatch overview* (logs, traces, metrics) |
 | http://localhost:8088 | Redpanda Console (topics, messages, consumer groups) |
 | `lazydocker` | Containers, logs, restarts in the terminal |
@@ -78,7 +79,7 @@ make trace-ride RIDE=<rideId>                                  # what happened, 
 
 **Postman:** import [postman/ridehail.postman_collection.json](postman/ridehail.postman_collection.json): a happy-path scenario plus one folder per acceptance criterion ([how to use](docs/local-development.md#postman)).
 
-Full API (12 endpoints with error codes): [architecture §6](docs/architecture.md#6-public-api).
+Full API: [api/openapi.yaml](api/openapi.yaml) (OpenAPI 3.0, also at http://localhost:8080/docs/) and [architecture §6](docs/architecture.md#6-public-api).
 
 ### gRPC API v2
 

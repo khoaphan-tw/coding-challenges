@@ -1,0 +1,502 @@
+openapi: 3.0.3
+info:
+  title: Ride-Hailing Dispatch API
+  version: 1.0.0
+  description: |
+    REST API (v1) of the ride-hailing dispatch service (Coding Challenge #3).
+
+    * All calls go through the gateway on `http://localhost:8080`.
+    * Dispatch is **asynchronous**: after `POST /rides` the ride moves to `MATCHING`
+      and then `DRIVER_ASSIGNED` within milliseconds, through events (AC-10). Poll
+      `GET /rides/{rideId}` to follow it.
+    * Errors use RFC 9457 `application/problem+json` with a stable `code`.
+    * Two driver-app APIs also exist as gRPC streams (v2) on `localhost:9090`;
+      their contracts are in `api/proto` (not described here).
+# Authentication is out of scope for the challenge: no operation requires credentials.
+security: []
+servers:
+  - url: http://localhost:8080
+    description: Local gateway (make up)
+tags:
+  - name: Rides
+    description: Passenger side (ride-service). AC-01, AC-06, AC-08.
+  - name: Drivers
+    description: Driver status and location (driver-service). AC-02, AC-03.
+  - name: Offers
+    description: Offers and the dispatch saga (dispatch-service). AC-04, AC-05, AC-07, AC-09.
+  - name: System
+    description: Gateway health.
+
+paths:
+  /rides:
+    post:
+      tags: [Rides]
+      operationId: createRide
+      summary: Request a ride
+      description: |
+        Creates a ride in `REQUESTED` and starts dispatch asynchronously (AC-01).
+        The `Idempotency-Key` is stored with the response in the same transaction (AC-08):
+        the same key with the same body returns the original ride (`201`, header
+        `Idempotent-Replayed: true`); the same key with a different body is rejected.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateRideRequest' }
+            example:
+              passengerId: P001
+              pickup: { latitude: 10.7769, longitude: 106.7009 }
+              destination: { latitude: 10.8231, longitude: 106.6297 }
+      responses:
+        '201':
+          description: Ride created, or the original ride for a repeated key.
+          headers:
+            Idempotent-Replayed:
+              $ref: '#/components/headers/IdempotentReplayed'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ride' }
+        '400':
+          description: '`IDEMPOTENCY_KEY_REQUIRED` (missing or longer than 200 characters) or `INVALID_JSON`.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '422':
+          description: '`INVALID_COORDINATES`, `PASSENGER_REQUIRED`, `UNKNOWN_PASSENGER` or `IDEMPOTENCY_KEY_REUSED`.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /rides/{rideId}:
+    get:
+      tags: [Rides]
+      operationId: getRide
+      summary: Get a ride
+      parameters: [{ $ref: '#/components/parameters/RideId' }]
+      responses:
+        '200':
+          description: The ride.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Ride' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /rides/{rideId}/history:
+    get:
+      tags: [Rides]
+      operationId: getRideHistory
+      summary: Every status change of a ride
+      description: One row per transition, with the action and its cause (an event id or the HTTP request) (AC-06).
+      parameters: [{ $ref: '#/components/parameters/RideId' }]
+      responses:
+        '200':
+          description: The ride's transitions, oldest first.
+          content: { application/json: { schema: { $ref: '#/components/schemas/RideHistory' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /rides/{rideId}/cancel:
+    post:
+      tags: [Rides]
+      operationId: cancelRide
+      summary: Passenger cancels the ride
+      description: |
+        Allowed in `REQUESTED`, `MATCHING`, `DRIVER_ASSIGNED` and `DRIVER_ACCEPTED`. The saga releases
+        the driver (compensation). Repeating a cancel returns `200` with no change.
+      parameters: [{ $ref: '#/components/parameters/RideId' }]
+      responses:
+        '200':
+          description: The ride, now `CANCELLED`.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Ride' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidTransition' }
+
+  /rides/{rideId}/complete:
+    post:
+      tags: [Rides]
+      operationId: completeRide
+      summary: Complete an accepted ride
+      description: Allowed only in `DRIVER_ACCEPTED`. The driver becomes `AVAILABLE` again. Repeating returns `200`.
+      parameters: [{ $ref: '#/components/parameters/RideId' }]
+      responses:
+        '200':
+          description: The ride, now `COMPLETED`.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Ride' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidTransition' }
+
+  /rides/{rideId}/offers/{driverId}/accept:
+    post:
+      tags: [Offers]
+      operationId: acceptOffer
+      summary: Driver accepts the offer
+      description: |
+        Only the driver holding the current `PENDING` offer can accept, before it expires (AC-05).
+        `200` means the offer is `ACCEPTED` (the saga's pivot); the ride shows `DRIVER_ACCEPTED`
+        and the driver `BUSY` a few milliseconds later. A repeated accept returns `200` with
+        `Idempotent-Replayed: true` and changes nothing (AC-08).
+      parameters:
+        - $ref: '#/components/parameters/RideId'
+        - $ref: '#/components/parameters/DriverId'
+      responses:
+        '200':
+          description: Offer accepted (or already accepted by this driver).
+          headers:
+            Idempotent-Replayed:
+              $ref: '#/components/headers/IdempotentReplayed'
+          content: { application/json: { schema: { $ref: '#/components/schemas/OfferResult' } } }
+        '404': { $ref: '#/components/responses/OfferNotFound' }
+        '409': { $ref: '#/components/responses/OfferConflict' }
+
+  /rides/{rideId}/offers/{driverId}/reject:
+    post:
+      tags: [Offers]
+      operationId: rejectOffer
+      summary: Driver rejects the offer
+      description: |
+        The driver is excluded from this ride for good, released (`AVAILABLE`), and the ride goes
+        back to `MATCHING` for the next nearest driver (AC-05, AC-07). A repeated reject returns `200`.
+      parameters:
+        - $ref: '#/components/parameters/RideId'
+        - $ref: '#/components/parameters/DriverId'
+      responses:
+        '200':
+          description: Offer rejected (or already rejected by this driver).
+          headers:
+            Idempotent-Replayed:
+              $ref: '#/components/headers/IdempotentReplayed'
+          content: { application/json: { schema: { $ref: '#/components/schemas/OfferResult' } } }
+        '404': { $ref: '#/components/responses/OfferNotFound' }
+        '409': { $ref: '#/components/responses/OfferConflict' }
+
+  /rides/{rideId}/dispatch:
+    get:
+      tags: [Offers]
+      operationId: getDispatch
+      summary: Dispatch view of a ride (saga, offers, exclusions, steps)
+      description: Read-only view for support and debugging (observability).
+      parameters: [{ $ref: '#/components/parameters/RideId' }]
+      responses:
+        '200':
+          description: The dispatch state.
+          content: { application/json: { schema: { $ref: '#/components/schemas/DispatchView' } } }
+        '404':
+          description: '`SAGA_NOT_FOUND`.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /drivers/{driverId}:
+    get:
+      tags: [Drivers]
+      operationId: getDriver
+      summary: Get a driver
+      parameters: [{ $ref: '#/components/parameters/DriverId' }]
+      responses:
+        '200':
+          description: The driver.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Driver' } } }
+        '404': { $ref: '#/components/responses/DriverNotFound' }
+
+  /drivers/{driverId}/availability:
+    put:
+      tags: [Drivers]
+      operationId: setDriverAvailability
+      summary: Driver goes online or offline
+      description: |
+        Only `OFFLINE ⇄ AVAILABLE` (AC-02). `OFFERED` and `BUSY` are set by dispatch and cannot
+        change availability. Repeating the same status returns `200`.
+      parameters: [{ $ref: '#/components/parameters/DriverId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AvailabilityRequest' }
+            example: { status: AVAILABLE }
+      responses:
+        '200':
+          description: The driver.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Driver' } } }
+        '400': { $ref: '#/components/responses/InvalidJson' }
+        '404': { $ref: '#/components/responses/DriverNotFound' }
+        '409':
+          description: '`INVALID_TRANSITION`: the driver is `OFFERED` or `BUSY`.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '422':
+          description: '`INVALID_STATUS`: only `AVAILABLE` or `OFFLINE` can be set.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /drivers/{driverId}/location:
+    put:
+      tags: [Drivers]
+      operationId: updateDriverLocation
+      summary: Driver reports a location
+      description: |
+        Stores the latest location and increments the driver's `version`; matching uses the latest
+        location (AC-03). gRPC v2 alternative: `ridehail.driver.v2.DriverLocationService/StreamLocations`.
+      parameters: [{ $ref: '#/components/parameters/DriverId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Point' }
+            example: { latitude: 10.7772, longitude: 106.7011 }
+      responses:
+        '200':
+          description: The driver.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Driver' } } }
+        '400': { $ref: '#/components/responses/InvalidJson' }
+        '404': { $ref: '#/components/responses/DriverNotFound' }
+        '422':
+          description: '`INVALID_COORDINATES`.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /drivers/{driverId}/offer:
+    get:
+      tags: [Offers]
+      operationId: getPendingOffer
+      summary: The driver's pending offer (polling)
+      description: |
+        Returns the offer waiting for this driver, or `204` when there is none (AC-05).
+        gRPC v2 alternative (push instead of polling): `ridehail.dispatch.v2.OfferService/WatchOffers`.
+      parameters: [{ $ref: '#/components/parameters/DriverId' }]
+      responses:
+        '200':
+          description: The pending offer.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Offer' } } }
+        '204':
+          description: No pending offer.
+
+  /healthz:
+    get:
+      tags: [System]
+      operationId: health
+      summary: Gateway health
+      responses:
+        '200':
+          description: The gateway is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string, example: ok } }
+
+components:
+  parameters:
+    RideId:
+      name: rideId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      example: 01a197d1-6d32-7afa-86c5-f3060f7d6bc9
+    DriverId:
+      name: driverId
+      in: path
+      required: true
+      schema: { type: string }
+      example: D001
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Unique per logical request; reuse it when retrying. Max 200 characters.
+      schema: { type: string, maxLength: 200 }
+      example: 7c2f4d0e-ride-request-1
+
+  headers:
+    IdempotentReplayed:
+      description: '`true` when this response is a replay of an earlier identical request.'
+      schema: { type: string, enum: ['true'] }
+
+  responses:
+    NotFound:
+      description: '`RIDE_NOT_FOUND`.'
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    DriverNotFound:
+      description: '`DRIVER_NOT_FOUND`.'
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    OfferNotFound:
+      description: '`OFFER_NOT_FOUND`: this driver has no offer for this ride.'
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    OfferConflict:
+      description: '`OFFER_NOT_CURRENT` (already answered, timed out, cancelled, or another answer won) or `OFFER_EXPIRED`.'
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    InvalidTransition:
+      description: '`INVALID_TRANSITION`: not allowed from the current status.'
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    InvalidJson:
+      description: '`INVALID_JSON`: malformed body or unknown field.'
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  schemas:
+    Point:
+      type: object
+      required: [latitude, longitude]
+      properties:
+        latitude: { type: number, format: double, minimum: -90, maximum: 90 }
+        longitude: { type: number, format: double, minimum: -180, maximum: 180 }
+
+    CreateRideRequest:
+      type: object
+      required: [passengerId, pickup, destination]
+      additionalProperties: false
+      properties:
+        passengerId: { type: string, example: P001, description: 'Seeded passengers: P001–P010.' }
+        pickup: { $ref: '#/components/schemas/Point' }
+        destination: { $ref: '#/components/schemas/Point' }
+
+    RideStatus:
+      type: string
+      enum: [REQUESTED, MATCHING, DRIVER_ASSIGNED, DRIVER_ACCEPTED, COMPLETED, CANCELLED]
+
+    Ride:
+      type: object
+      required: [rideId, passengerId, pickup, destination, status, assignedDriverId, version, createdAt, updatedAt]
+      properties:
+        rideId: { type: string, format: uuid, description: UUIDv7 }
+        passengerId: { type: string }
+        pickup: { $ref: '#/components/schemas/Point' }
+        destination: { $ref: '#/components/schemas/Point' }
+        status: { $ref: '#/components/schemas/RideStatus' }
+        assignedDriverId: { type: string, nullable: true, description: Set while DRIVER_ASSIGNED or later. }
+        currentOfferId: { type: string, format: uuid }
+        version: { type: integer, format: int64 }
+        traceId: { type: string, description: 'The ride''s trace id: one trace in Tempo and one key for all logs of the journey.' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    RideHistory:
+      type: object
+      required: [rideId, transitions]
+      properties:
+        rideId: { type: string, format: uuid }
+        transitions:
+          type: array
+          items:
+            type: object
+            required: [from, to, action, at]
+            properties:
+              from:
+                type: string
+                nullable: true
+                description: Null for the first row (creation).
+                enum: [REQUESTED, MATCHING, DRIVER_ASSIGNED, DRIVER_ACCEPTED, COMPLETED, CANCELLED]
+              to: { $ref: '#/components/schemas/RideStatus' }
+              action: { type: string, example: AssignDriver }
+              driverId: { type: string }
+              offerId: { type: string, format: uuid }
+              cause: { type: string, description: '`event:<eventId>` or `http:…`.' }
+              at: { type: string, format: date-time }
+
+    DriverStatus:
+      type: string
+      enum: [OFFLINE, AVAILABLE, OFFERED, BUSY]
+
+    Driver:
+      type: object
+      required: [driverId, status, latitude, longitude, currentRideId, version, updatedAt]
+      properties:
+        driverId: { type: string }
+        status: { $ref: '#/components/schemas/DriverStatus' }
+        latitude: { type: number, format: double }
+        longitude: { type: number, format: double }
+        currentRideId: { type: string, nullable: true, description: Set while OFFERED or BUSY. }
+        version: { type: integer, format: int64, description: Grows with every status or location change. }
+        locationUpdatedAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    AvailabilityRequest:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status: { type: string, enum: [AVAILABLE, OFFLINE] }
+
+    OfferStatus:
+      type: string
+      enum: [PENDING, ACCEPTED, REJECTED, EXPIRED, CANCELLED]
+
+    Offer:
+      type: object
+      required: [offerId, rideId, driverId, status, createdAt, expiresAt]
+      properties:
+        offerId: { type: string, format: uuid }
+        rideId: { type: string, format: uuid }
+        driverId: { type: string }
+        status: { $ref: '#/components/schemas/OfferStatus' }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time, description: createdAt + OFFER_TIMEOUT (default 30 s). }
+        respondedAt: { type: string, format: date-time }
+
+    OfferResult:
+      type: object
+      required: [offerId, rideId, driverId, status]
+      properties:
+        offerId: { type: string, format: uuid }
+        rideId: { type: string, format: uuid }
+        driverId: { type: string }
+        status: { $ref: '#/components/schemas/OfferStatus' }
+
+    DispatchView:
+      type: object
+      required: [saga, offers, exclusions, steps]
+      properties:
+        saga:
+          type: object
+          required: [rideId, status, pickup, radiusM, round, roundSkips, version, createdAt, updatedAt]
+          properties:
+            rideId: { type: string, format: uuid }
+            status:
+              type: string
+              enum: [STARTED, MATCHING, RESERVING, OFFERED, ACCEPTED, WAITING_FOR_DRIVER, COMPLETED, CANCELLED]
+            pickup: { $ref: '#/components/schemas/Point' }
+            radiusM: { type: number }
+            reservingDriverId: { type: string }
+            reservingOfferId: { type: string, format: uuid }
+            currentOfferId: { type: string, format: uuid }
+            round: { type: integer }
+            roundSkips: { type: array, items: { type: string } }
+            nextRetryAt: { type: string, format: date-time }
+            version: { type: integer, format: int64 }
+            traceId: { type: string }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+        offers:
+          type: array
+          items: { $ref: '#/components/schemas/Offer' }
+        exclusions:
+          type: object
+          description: 'Drivers excluded from this ride: driverId → reason (REJECTED or EXPIRED).'
+          additionalProperties: { type: string }
+        steps:
+          type: array
+          items:
+            type: object
+            required: [step, at]
+            properties:
+              step: { type: string, example: OFFERED }
+              detail: { type: string }
+              driverId: { type: string }
+              offerId: { type: string, format: uuid }
+              eventId: { type: string, format: uuid }
+              at: { type: string, format: date-time }
+
+    Problem:
+      type: object
+      description: RFC 9457 problem details with a stable machine-readable `code`.
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, example: about:blank }
+        title: { type: string, example: Conflict }
+        status: { type: integer, example: 409 }
+        code:
+          type: string
+          enum:
+            - IDEMPOTENCY_KEY_REQUIRED
+            - INVALID_JSON
+            - INVALID_COORDINATES
+            - PASSENGER_REQUIRED
+            - UNKNOWN_PASSENGER
+            - IDEMPOTENCY_KEY_REUSED
+            - RIDE_NOT_FOUND
+            - INVALID_TRANSITION
+            - DRIVER_NOT_FOUND
+            - INVALID_STATUS
+            - OFFER_NOT_FOUND
+            - OFFER_NOT_CURRENT
+            - OFFER_EXPIRED
+            - SAGA_NOT_FOUND
+        detail: { type: string }

@@ -104,6 +104,7 @@ Startup order (Compose health checks enforce it):
 | `postgres` | 3 databases (user `postgres` / `postgres`) | localhost:5432 |
 | `redis` | GEO index | localhost:6379 |
 | `redpanda` | Kafka API broker | localhost:19092 |
+| `swagger-ui` | REST API documentation ([api/openapi.yaml](../api/openapi.yaml)), behind the gateway | **http://localhost:8080/docs/** |
 | `redpanda-console` | Browse topics, messages, consumer groups | **http://localhost:8088** |
 | `lgtm` | Grafana + Loki + Tempo + Prometheus + OTel Collector | **http://localhost:3000** (no login) |
 
@@ -135,6 +136,10 @@ Every HTTP call is logged with its request (method, URL, headers, body) and resp
 ```
 
 JSON is pretty-printed; `COMPACT=1 make demo` prints one line per body.
+
+### Swagger UI (OpenAPI)
+
+Open **http://localhost:8080/docs/**. It renders [api/openapi.yaml](../api/openapi.yaml), the REST contract: every endpoint, schema and error `code`. **Try it out** sends real requests to the running stack. The raw file is also served at http://localhost:8080/openapi.yaml, so any tool can import it (Postman → Import → URL, Insomnia, Bruno, client generators). `make openapi-lint` lints it.
 
 ### Postman
 

@@ -90,7 +90,8 @@ flowchart LR
 
 | Container | Technology | Responsibility | Requirements |
 |---|---|---|---|
-| api-gateway | nginx 1.29 | REST on `:8080` (routes by path, hides `/internal/*`); gRPC on `:9090` (routes by gRPC service) | Spec endpoints span two services |
+| api-gateway | nginx 1.29 | REST on `:8080` (routes by path, hides `/internal/*`, serves `/docs/` and `/openapi.yaml`); gRPC on `:9090` (routes by gRPC service) | Spec endpoints span two services |
+| swagger-ui | Swagger UI 5 | Renders `api/openapi.yaml` at `/docs/` behind the gateway | API documentation |
 | ride-service | Go | Ride lifecycle, passengers, Idempotency-Key, status history | AC-01, AC-06, AC-08 |
 | driver-service | Go | Driver status and location; **atomic reservation** | AC-02, AC-03, AC-09 |
 | dispatch-service | Go | Saga orchestrator, offers, exclusions, timeouts, matching, GEO projection | AC-04, AC-05, AC-07, AC-10 |
@@ -158,6 +159,8 @@ flowchart TB
 ## 6. Public API
 
 All traffic goes through the gateway: **REST (v1) on `:8080`** and **gRPC (v2) on `:9090`**. REST errors use RFC 9457 `application/problem+json` with a stable `code` ([ADR-010](adr/ADR-010-api-and-identifiers.md)).
+
+**Contracts:** REST is specified in [api/openapi.yaml](../api/openapi.yaml) (OpenAPI 3.0; browse it at **http://localhost:8080/docs/**, checked against the running API by `TestRESTResponsesMatchOpenAPI`); gRPC in [api/proto](../api/proto/). The tables below summarise them.
 
 ### REST (v1)
 
@@ -447,7 +450,7 @@ Migrations are embedded in each service ([ride](../services/ride/internal/adapte
 ```
 coding-challenge-3/kvp/
 ├── README.md · Makefile · docker-compose.yml · Dockerfile · go.mod
-├── api/                  proto/ gRPC contracts (API v2) · gen/ generated Go code
+├── api/                  openapi.yaml REST contract (v1) · proto/ gRPC contracts (v2) · gen/ generated Go code
 ├── deploy/                 nginx gateway · Postgres init (3 DBs) · Grafana dashboard
 ├── pkg/                    shared outer-ring code, no business rules
 │   ├── geo/                Point, validation, Haversine (pure)

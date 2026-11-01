@@ -203,6 +203,7 @@ The test strategy (levels, invariants, how to run) is in [testing.md](testing.md
 | `docs/sequence-diagram.md` | ✅ |
 | `docs/adr/ADR-001-matching.md` | ✅ |
 | `docs/adr/ADR-002-concurrency.md` | ✅ |
+| API contract (extra) | ✅ [api/openapi.yaml](../api/openapi.yaml) (REST, browsable at http://localhost:8080/docs/), [api/proto](../api/proto/) (gRPC v2) |
 | README: how to run | ✅ [README › How to run](../README.md#how-to-run) |
 | README: how to run tests | ✅ [README › How to test](../README.md#how-to-test) |
 | README: architecture | ✅ [README › Architecture](../README.md#architecture) |
@@ -245,6 +246,6 @@ Run on 2026-11-01 (Colima, Apple Silicon), after the Clean Architecture refactor
 |---|---|---|
 | Unit + architecture | `make test` | 32 tests in 6 packages ✅ |
 | Integration (testcontainers: Postgres 18, Redis 8) | `make test-int` | 23 tests in 4 packages ✅ |
-| End-to-end (gateway REST + gRPC, incl. the real 30 s timeout) | `make test-e2e` | 11 tests ✅ (~37 s) |
+| End-to-end (gateway REST + gRPC + OpenAPI contract, incl. the real 30 s timeout) | `make test-e2e` | 12 tests ✅ (~38 s) |
 | Postman / newman | `make postman` | 56 requests, 115 assertions, 0 failed ✅ |
 | Architecture rules | part of `make test` | domain pure; no infrastructure in inner rings; adapters independent ✅ |

@@ -1,4 +1,4 @@
-# ADR-010: API style, idempotency keys and identifiers: REST + problem+json (v1), gRPC streams for two driver APIs (v2), Idempotency-Key in Postgres, UUIDv7
+# ADR-010: API style, documentation, idempotency keys and identifiers: REST + problem+json (v1, OpenAPI), gRPC streams for two driver APIs (v2), Idempotency-Key in Postgres, UUIDv7
 
 * **Status:** Accepted
 * **Date:** 2026-11-01
@@ -106,5 +106,26 @@ Seeded records keep readable ids (`P001`, `D001`) as in the challenge's examples
 
 * ✅ The two highest-frequency driver calls use one connection each; offers arrive without polling.
 * ✅ v1 stays unchanged; clients move per endpoint.
-* ⚠️ Two API styles to document and test (proto files + OpenAPI). gRPC is covered by e2e tests and `grpcurl`, not by the Postman collection.
+* ⚠️ Two API styles to document and test (proto files + OpenAPI, [Part 7](#part-7-api-documentation-openapi-spec-and-postman-collection)). gRPC is covered by e2e tests and `grpcurl`, not by the Postman collection.
 * ⚠️ Long-lived streams pin a driver to one service instance; scaling out needs connection-aware load balancing (L7 gRPC balancing in the gateway).
+
+## Part 7: API documentation: OpenAPI spec and Postman collection
+
+**Question:** should the API be described by an OpenAPI spec instead of a Postman collection?
+
+**Answer: both, with different jobs.** OpenAPI is the industry standard for describing an HTTP API: tool-neutral, reviewable in a pull request, and the input for docs, client generators, mock servers and contract tests. A Postman collection is a set of **scenarios** (request ordering, waiting for asynchronous results, assertions), which a spec cannot express.
+
+| Option | Describes the API | Runs scenarios | Tooling | Verdict |
+|---|---|---|---|---|
+| **OpenAPI 3.0 spec** ([api/openapi.yaml](../../api/openapi.yaml)) | ✅ Every endpoint, schema, header, status and error `code` | ❌ | Swagger UI, Redoc, Postman/Insomnia/Bruno import, client generators, validators | ✅ **Source of truth for the REST contract** |
+| **Postman collection** ([postman/](../../postman/)) | Partly (examples only) | ✅ One folder per AC, with checks; `make postman` | Postman, newman | ✅ **Acceptance scenarios** |
+| OpenAPI 3.1 | ✅ (full JSON Schema) | ❌ | Less complete support in validators and some UIs | Not yet: 3.0 works everywhere we need |
+| Generate the spec from code annotations (swaggo) | ✅ | ❌ | Comments drift silently; Go 1.22 mux patterns not well supported | ❌ The spec is written by hand and tested instead |
+| Generate code from the spec (oapi-codegen) | ✅ | ❌ | Typed handlers | Possible later; the handlers already exist and are small |
+| Protobuf / gRPC reflection | ✅ for gRPC | ❌ | grpcurl, Postman gRPC | ✅ For API v2 ([api/proto](../../api/proto/)) |
+
+**How the spec stays correct:**
+
+* `make openapi-lint` runs Redocly's recommended rules ([api/redocly.yaml](../../api/redocly.yaml) lists the 3 relaxed rules and why).
+* The e2e test `TestRESTResponsesMatchOpenAPI` calls every REST endpoint through the gateway (success and main error responses) and validates each status, header and body against the spec with kin-openapi. A field added to the spec but not returned, a wrong status or an undocumented error code fails the build.
+* Swagger UI is served by the gateway at **http://localhost:8080/docs/**, loading the same file from `/openapi.yaml`; "Try it out" calls the running stack.

@@ -1,0 +1,8 @@
+# Lint rules for api/openapi.yaml: `make openapi-lint`
+extends:
+  - recommended
+rules:
+  info-license: off            # internal coding-challenge API, no license to publish
+  no-server-example.com: off   # the only server is the local gateway (make up)
+  operation-4xx-response:      # GET /drivers/{id}/offer and /healthz have no client errors
+    severity: warn

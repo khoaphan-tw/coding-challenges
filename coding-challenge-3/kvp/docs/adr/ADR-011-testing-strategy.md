@@ -35,7 +35,7 @@ The riskiest code is not in Go functions; it is in the **interaction with Postgr
 |---|---|---|---|
 | Unit | `go test` | 6 packages | Ride use cases with fakes of the ports; architecture rules; ride state machine (valid / invalid / duplicate / terminal), driver status rules, matching (radius, offline, busy, tie-break, exclusions), coordinate validation |
 | Integration | `go test -tags integration` + testcontainers | 4 packages | **50 rounds of two goroutines reserving one driver** on real Postgres; idempotent create incl. 10 parallel duplicates; saga flows with simulated participants (reject → rematch, timeout, cancel/complete compensation, accept racing timeout, duplicate events); Redis GEO versioning |
-| E2E | `go test -tags e2e` against `make up` | 11 tests | Happy path, rematch, duplicate create/accept, two rides one driver, cancel release, invalid transitions, the real 30 s timeout, gRPC v2 location stream and offer push |
+| E2E | `go test -tags e2e` against `make up` | 12 tests | Happy path, rematch, duplicate create/accept, two rides one driver, cancel release, invalid transitions, the real 30 s timeout, gRPC v2 location stream and offer push, every REST response validated against `api/openapi.yaml` |
 | Exploratory / review | Postman collection (56 requests: happy path + one folder per AC), `make demo` | — | Same scenarios, readable request/response logs |
 
 Rules that make tests reliable:
