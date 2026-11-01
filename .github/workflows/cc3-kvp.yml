@@ -1,0 +1,95 @@
+# CI for coding-challenge-3/kvp (team KVP). Runs only when that folder or this file changes.
+#   lint ──┐
+#          ├──> e2e (whole stack in Docker: e2e tests + Postman)
+#   test ──┘
+name: cc3-kvp
+
+on:
+  push:
+    paths:
+      - "coding-challenge-3/kvp/**"
+      - ".github/workflows/cc3-kvp.yml"
+  pull_request:
+    paths:
+      - "coding-challenge-3/kvp/**"
+      - ".github/workflows/cc3-kvp.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: cc3-kvp-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: coding-challenge-3/kvp
+
+jobs:
+  lint:
+    name: Lint (Go + OpenAPI)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: coding-challenge-3/kvp/go.mod
+          cache-dependency-path: coding-challenge-3/kvp/go.sum
+      - name: golangci-lint (.golangci.yml)
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.15.0
+          working-directory: coding-challenge-3/kvp
+      - name: OpenAPI lint (api/openapi.yaml)
+        run: make openapi-lint
+
+  test:
+    name: Unit + architecture + integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: coding-challenge-3/kvp/go.mod
+          cache-dependency-path: coding-challenge-3/kvp/go.sum
+      - name: go vet (all build tags)
+        run: make vet
+      - name: Unit + architecture tests
+        run: make test
+      - name: Integration tests (testcontainers with Postgres and Redis)
+        run: make test-int
+
+  e2e:
+    name: End-to-end (REST, gRPC, OpenAPI contract, Postman)
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      OFFER_TIMEOUT: 5s # the timeout scenarios finish in seconds instead of 30 s
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: coding-challenge-3/kvp/go.mod
+          cache-dependency-path: coding-challenge-3/kvp/go.sum
+      - name: Start the stack
+        run: make up
+      - name: End-to-end tests
+        run: make test-e2e
+      - name: Postman collection (newman)
+        run: make postman
+      - name: Collect container logs
+        if: failure()
+        run: docker compose logs --no-color > compose-logs.txt
+      - name: Upload container logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-logs
+          path: coding-challenge-3/kvp/compose-logs.txt
+      - name: Stop the stack
+        if: always()
+        run: docker compose down -v
