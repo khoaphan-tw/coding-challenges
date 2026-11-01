@@ -80,12 +80,12 @@ The team chose Go (T2). This ADR records why Go fits the problem compared with o
 
 | Need | Chosen | Alternatives considered |
 |---|---|---|
-| IDs | `google/uuid` **v7** | v4 (random, poor index locality), ULID (`oklog/ulid`, same idea, non-standard), Snowflake (needs worker ids), `bigserial` (leaks volume, not globally unique). See [ADR-011](ADR-011-api-and-identifiers.md) |
+| IDs | `google/uuid` **v7** | v4 (random, poor index locality), ULID (`oklog/ulid`, same idea, non-standard), Snowflake (needs worker ids), `bigserial` (leaks volume, not globally unique). See [ADR-010](ADR-010-api-and-identifiers.md) |
 | Logging | `log/slog` | zap, zerolog, logrus ([ADR-005](ADR-005-observability.md)) |
 | Telemetry | OpenTelemetry Go SDK + `otelhttp`, `redisotel`, `otelslog` | Vendor agents ([ADR-005](ADR-005-observability.md)) |
 | Configuration | Environment variables (`svc.Env`, `svc.Duration`) | `spf13/viper`, `knadh/koanf`, `kelseyhightower/envconfig`: unnecessary for ~10 settings |
-| Dependency injection | Manual constructor wiring in each `cmd/main.go` (the Clean Architecture composition root, [ADR-013](ADR-013-clean-architecture.md)) | `google/wire`, `uber-go/fx`: unnecessary for 3 small services |
-| Testing | `testing` + `testcontainers-go` | testify, ginkgo/gomega, mocks ([ADR-012](ADR-012-testing-strategy.md)) |
+| Dependency injection | Manual constructor wiring in each `cmd/main.go` (the Clean Architecture composition root, [ADR-012](ADR-012-clean-architecture.md)) | `google/wire`, `uber-go/fx`: unnecessary for 3 small services |
+| Testing | `testing` + `testcontainers-go` | testify, ginkgo/gomega, mocks ([ADR-011](ADR-011-testing-strategy.md)) |
 
 ## Decision
 

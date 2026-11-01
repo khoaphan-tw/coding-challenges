@@ -1,4 +1,4 @@
-# ADR-012: Testing strategy: pure unit tests + testcontainers integration tests + black-box e2e
+# ADR-011: Testing strategy: pure unit tests + testcontainers integration tests + black-box e2e
 
 * **Status:** Accepted
 * **Date:** 2026-11-01
@@ -14,7 +14,7 @@ The riskiest code is not in Go functions; it is in the **interaction with Postgr
 | Option | What it proves | Speed | Realism | Verdict |
 |---|---|---|---|---|
 | **Pure unit tests** (state machines, matching, validation) | Business rules | ms | Rules only | ✅ Chosen: all rules extracted into pure functions |
-| **Use-case tests with in-memory fakes of the ports** | Application flows (idempotency, duplicate commands, replies) | ms | Flows, not SQL | ✅ Chosen: enabled by Clean Architecture ([ADR-013](ADR-013-clean-architecture.md)) |
+| **Use-case tests with in-memory fakes of the ports** | Application flows (idempotency, duplicate commands, replies) | ms | Flows, not SQL | ✅ Chosen: enabled by Clean Architecture ([ADR-012](ADR-012-clean-architecture.md)) |
 | **Architecture test** (`go list` dependency rules) | Layers depend inward; no infrastructure in inner rings | ~2 s | Structure | ✅ Chosen ([test/arch](../../test/arch/arch_test.go)) |
 | Generated mocks (`gomock`, `mockery`) / `sqlmock` | That code calls the mock as expected | ms | ❌ Cannot show that `WHERE status='AVAILABLE'` serialises two transactions | ❌ Hand-written fakes for flows; real Postgres for SQL |
 | In-memory fake repository | Logic with a fake store | ms | ❌ Fakes don't reproduce Postgres locking or isolation | ❌ |

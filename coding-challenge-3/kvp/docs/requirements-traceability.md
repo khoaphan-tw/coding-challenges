@@ -125,7 +125,7 @@ Every requirement of [Coding Challenge #3](../../coding-challenge-3.md) is mappe
 | Driver acceptance (`DriverAccepted ×2` → valid state) | Conditional update; repeat returns the stored outcome, no new commands | `offers.go` `Accept` | I-saga `TestDuplicateAcceptIsIdempotent`; E **`TestDuplicateAcceptKeepsValidState`** (5 parallel); P-05 |
 | Ride state transition | Idempotent state machine + inbox | ride domain + use case | U-ride `TestDuplicateTransitionsAreNoOps`; U-rideUC `TestDuplicateCommandIsAppliedAndRepliedOnce`; I-ride `TestCommandsAreIdempotentAndHistoryIsRecorded` |
 | Every consumed command/event (all services) | Inbox row in the handler's transaction | [pkg/broker](../pkg/broker/outbox.go) | I-driver `TestDuplicateCommandIsProcessedOnce` |
-| Strategy documented | — | — | [ADR-004](adr/ADR-004-messaging-outbox-inbox.md), [ADR-011 §2](adr/ADR-011-api-and-identifiers.md#part-2-idempotency-key-design-ac-01-ac-08), [architecture §11](architecture.md#11-consistency-concurrency-and-idempotency) |
+| Strategy documented | — | — | [ADR-004](adr/ADR-004-messaging-outbox-inbox.md), [ADR-010 §2](adr/ADR-010-api-and-identifiers.md#part-2-idempotency-key-design-ac-01-ac-08), [architecture §11](architecture.md#11-consistency-concurrency-and-idempotency) |
 
 ### AC-09: Concurrent Driver Assignment
 
@@ -177,7 +177,7 @@ The test strategy (levels, invariants, how to run) is in [testing.md](testing.md
 | Requirement | Where |
 |---|---|
 | System architecture diagram | [architecture §2–§4](architecture.md#2-system-context-c4-level-1) (C4 context, containers, components), README diagram |
-| Reasoning explained | [architecture §1, §3, §13](architecture.md#13-decisions-at-a-glance) + 13 ADRs, each comparing alternatives |
+| Reasoning explained | [architecture §1, §3, §13](architecture.md#13-decisions-at-a-glance) + 12 ADRs, each comparing alternatives |
 
 ### Scalability & Performance Design
 
@@ -218,9 +218,9 @@ The test strategy (levels, invariants, how to run) is in [testing.md](testing.md
 | # | Constraint | Met by |
 |---|---|---|
 | T1 | Microservices + saga | 3 services, DB per service ([ADR-006](adr/ADR-006-service-architecture.md)); orchestrated saga ([ADR-003](adr/ADR-003-saga-orchestration.md)) |
-| T2 | Go | Go 1.27 ([ADR-007](adr/ADR-007-language-and-libraries.md)); Clean Architecture per service ([ADR-013](adr/ADR-013-clean-architecture.md)) |
+| T2 | Go | Go 1.27 ([ADR-007](adr/ADR-007-language-and-libraries.md)); Clean Architecture per service ([ADR-012](adr/ADR-012-clean-architecture.md)) |
 | T3 | Observability | OpenTelemetry → Grafana LGTM; one trace per ride ([ADR-005](adr/ADR-005-observability.md), [observability.md](observability.md)) |
-| T4 | Everything in Docker; Colima + lazydocker via brew, no Docker Desktop | `make up` ([ADR-010](adr/ADR-010-runtime-gateway-tooling.md), [local-development.md](local-development.md)) |
+| T4 | Everything in Docker; Colima + lazydocker via brew, no Docker Desktop | `make up` ([local-development.md](local-development.md), [docker-compose.yml](../docker-compose.yml)) |
 | T5 | Redis GEO + Kafka/Redpanda + PostgreSQL | [ADR-001](adr/ADR-001-matching.md), [ADR-008](adr/ADR-008-data-stores.md), [ADR-009](adr/ADR-009-message-broker.md) |
 | T6 | Documents in `docs/` | this folder ([README › Documentation](../README.md#documentation)) |
 

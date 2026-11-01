@@ -105,4 +105,4 @@ The topics are the ones challenge §5 asks about.
 
 ## 8. What is not measured
 
-Honest note: we did **not** run load tests. The per-node limits above (Postgres ~10–20k simple writes/s, Redis ~100k+ ops/s per core) are typical published orders of magnitude, not measurements of this system. The next step would be k6 scenarios for location ingestion and hot-zone contention ([ADR-012](adr/ADR-012-testing-strategy.md)).
+Honest note: we did **not** run load tests. The per-node limits above (Postgres ~10–20k simple writes/s, Redis ~100k+ ops/s per core) are typical published orders of magnitude, not measurements of this system. The next step would be k6 scenarios for location ingestion and hot-zone contention ([ADR-011](adr/ADR-011-testing-strategy.md)).

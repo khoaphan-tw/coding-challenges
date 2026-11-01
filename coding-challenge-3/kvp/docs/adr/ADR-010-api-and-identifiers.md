@@ -1,4 +1,4 @@
-# ADR-011: API style, idempotency keys and identifiers: REST + problem+json, Idempotency-Key in Postgres, UUIDv7
+# ADR-010: API style, idempotency keys and identifiers: REST + problem+json, Idempotency-Key in Postgres, UUIDv7
 
 * **Status:** Accepted
 * **Date:** 2026-11-01

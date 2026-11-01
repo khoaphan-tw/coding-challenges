@@ -8,7 +8,7 @@ Built for [Coding Challenge #3](../coding-challenge-3.md) as **three Go microser
 |---|---|
 | **Requirements** | All 10 acceptance criteria and every §5 evaluation item are met and traced to code and tests → [requirements traceability](docs/requirements-traceability.md) |
 | **Tests** | 32 unit + architecture, 23 integration (real Postgres/Redis), 8 end-to-end, 119 Postman requests / 247 assertions, all green → [testing](docs/testing.md) |
-| **Design** | C4 architecture, 8 sequence flows, 14 design patterns explained, 13 ADRs that each compare alternatives → [documentation](#documentation) |
+| **Design** | C4 architecture, 8 sequence flows, 14 design patterns explained, 12 ADRs that each compare alternatives → [documentation](#documentation) |
 | **Run it** | `make up && make demo` |
 
 ## Contents
@@ -152,7 +152,7 @@ Every flow and race as a sequence diagram: [docs/sequence-diagram.md](docs/seque
 
 ### Code structure
 
-Each service follows **Clean Architecture**: dependencies point inward only, and `make test` fails if they don't ([ADR-013](docs/adr/ADR-013-clean-architecture.md)).
+Each service follows **Clean Architecture**: dependencies point inward only, and `make test` fails if they don't ([ADR-012](docs/adr/ADR-012-clean-architecture.md)).
 
 ```
 services/<ride|driver|dispatch>/
@@ -269,15 +269,15 @@ Plus B4–B6, S3/S4/S6, T4/T5, the 1k → 100k → 1M evolution and the seven to
 |---|---|---|---|
 | Language | Go 1.27, standard library first | ~20 MB images, millisecond start-up, goroutines for consumer loops and workers, explicit code | [ADR-007](docs/adr/ADR-007-language-and-libraries.md) (vs Java/Spring, Kotlin, .NET, Node, Python, Rust; Gin/Echo/Fiber; GORM/sqlc) |
 | Architecture | 3 microservices, DB per service | Team goal; split by how parts scale | [ADR-006](docs/adr/ADR-006-service-architecture.md) |
-| Code structure | Clean Architecture, enforced by a test | Flows testable with fakes; atomic SQL in one adapter | [ADR-013](docs/adr/ADR-013-clean-architecture.md) |
+| Code structure | Clean Architecture, enforced by a test | Flows testable with fakes; atomic SQL in one adapter | [ADR-012](docs/adr/ADR-012-clean-architecture.md) |
 | Consistency | Orchestrated saga, hand-rolled | Loop + timer + compensations need one owner; no workflow server | [ADR-003](docs/adr/ADR-003-saga-orchestration.md) (vs 2PC, choreography, Temporal, Camunda, …) |
 | Messaging | Outbox + inbox, at-least-once | No lost or phantom events, no extra infrastructure | [ADR-004](docs/adr/ADR-004-messaging-outbox-inbox.md) |
 | Broker | Redpanda | Kafka API in one light container | [ADR-009](docs/adr/ADR-009-message-broker.md) |
 | Data | PostgreSQL 18 + Redis 8 | Conditional updates, `SKIP LOCKED`, partial unique indexes; in-memory geo search | [ADR-008](docs/adr/ADR-008-data-stores.md), [ADR-001](docs/adr/ADR-001-matching.md) |
-| API | REST + RFC 9457, UUIDv7 | Matches the spec; standard errors; time-sortable ids | [ADR-011](docs/adr/ADR-011-api-and-identifiers.md) |
+| API | REST + RFC 9457, UUIDv7 | Matches the spec; standard errors; time-sortable ids | [ADR-010](docs/adr/ADR-010-api-and-identifiers.md) |
 | Observability | OpenTelemetry → Grafana LGTM | Vendor-neutral; one container locally | [ADR-005](docs/adr/ADR-005-observability.md) |
-| Runtime | Colima + Compose + lazydocker, nginx | No Docker Desktop; one-command start | [ADR-010](docs/adr/ADR-010-runtime-gateway-tooling.md) |
-| Testing | Unit + fakes + testcontainers + e2e + Postman | AC-09 proven on a real database | [ADR-012](docs/adr/ADR-012-testing-strategy.md) |
+| Runtime | Colima + Compose + lazydocker, nginx gateway | No Docker Desktop; one-command start | [local-development.md](docs/local-development.md), [deploy/nginx.conf](deploy/nginx.conf) |
+| Testing | Unit + fakes + testcontainers + e2e + Postman | AC-09 proven on a real database | [ADR-011](docs/adr/ADR-011-testing-strategy.md) |
 
 ### What trade-offs did we make?
 
@@ -324,7 +324,7 @@ All detailed documents are in [docs/](docs/). The challenge requires [architectu
 |---|---|---|
 | **A reviewer checking the requirements** | [requirements-traceability.md](docs/requirements-traceability.md): every AC bullet → mechanism → code → tests → how to verify, plus the latest test run | 15 min |
 | **Someone who wants to understand the design** | [architecture.md](docs/architecture.md) → [sequence-diagram.md](docs/sequence-diagram.md) → [patterns.md](docs/patterns.md) → [ADR-002](docs/adr/ADR-002-concurrency.md), [ADR-003](docs/adr/ADR-003-saga-orchestration.md), [ADR-004](docs/adr/ADR-004-messaging-outbox-inbox.md) | 40 min |
-| **A developer running or changing the code** | [local-development.md](docs/local-development.md) → [architecture §4 and §14](docs/architecture.md#4-inside-a-service-clean-architecture-c4-level-3) → [ADR-013](docs/adr/ADR-013-clean-architecture.md) → [testing.md](docs/testing.md) | 20 min |
+| **A developer running or changing the code** | [local-development.md](docs/local-development.md) → [architecture §4 and §14](docs/architecture.md#4-inside-a-service-clean-architecture-c4-level-3) → [ADR-012](docs/adr/ADR-012-clean-architecture.md) → [testing.md](docs/testing.md) | 20 min |
 | **An engineer investigating a ride** | [observability.md](docs/observability.md) (`make trace-ride`, `make trace-logs`, Tempo, Grafana) | 10 min |
 | **Thinking about growth and limits** | [scalability.md](docs/scalability.md) → [known limitations](docs/architecture.md#15-known-limitations) | 15 min |
 
@@ -340,4 +340,4 @@ All detailed documents are in [docs/](docs/). The challenge requires [architectu
 | [scalability.md](docs/scalability.md) | How does it grow from 1k to 1M drivers? (load model, evolution, the 7 topics, 6 bottlenecks, 6 strategies, 5 trade-offs) |
 | [observability.md](docs/observability.md) | What happened to ride R001? (log format, trace-by-id, one trace per ride, dashboard, alerts) |
 | [local-development.md](docs/local-development.md) | How do I install, run, demo and test it on a Mac with Colima? (incl. Postman, config, troubleshooting) |
-| [adr/](docs/adr/README.md) | Why each decision, compared with the alternatives (13 ADRs) |
+| [adr/](docs/adr/README.md) | Why each decision, compared with the alternatives (12 ADRs) |

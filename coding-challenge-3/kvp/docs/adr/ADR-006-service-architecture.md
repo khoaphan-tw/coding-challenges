@@ -53,7 +53,7 @@ The challenge accepts a modular monolith and timeboxes the work to 4–6 hours. 
 
 Integration is **asynchronous only** between services (commands, replies and events on Redpanda, [ADR-004](ADR-004-messaging-outbox-inbox.md)). The one synchronous internal call is dispatch-service's `GET /internal/drivers`, used to rebuild the GEO index on startup.
 
-Clients reach services through one **API gateway** (nginx, [ADR-010](ADR-010-runtime-gateway-tooling.md)) that routes by path. Clients never know there are three services.
+Clients reach services through one **API gateway** (nginx, [deploy/nginx.conf](../../deploy/nginx.conf); setup in [local-development.md](../local-development.md)) that routes by path. Clients never know there are three services.
 
 ## Consequences
 

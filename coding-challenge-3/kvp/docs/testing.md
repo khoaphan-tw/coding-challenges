@@ -1,6 +1,6 @@
 # Testing
 
-How the system is tested, what each level proves, and the invariants the tests protect. The per-requirement map (each acceptance bullet → test) is in [requirements-traceability.md](requirements-traceability.md). Why this strategy over the alternatives is in [ADR-012](adr/ADR-012-testing-strategy.md).
+How the system is tested, what each level proves, and the invariants the tests protect. The per-requirement map (each acceptance bullet → test) is in [requirements-traceability.md](requirements-traceability.md). Why this strategy over the alternatives is in [ADR-011](adr/ADR-011-testing-strategy.md).
 
 ## 1. Principles
 

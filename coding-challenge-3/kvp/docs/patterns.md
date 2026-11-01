@@ -44,12 +44,12 @@ This document explains every design pattern the system uses: the problem it solv
 | P5 | Retry + backoff + jitter + DLQ | Transient failures vs poison messages | [pkg/broker/consumer.go](../pkg/broker/consumer.go) | AC-10 | [ADR-004](adr/ADR-004-messaging-outbox-inbox.md) | Manual crash drill; DLQ metrics |
 | P6 | Compare-and-set in SQL | Two rides race for one driver; accept races timeout | driver and dispatch postgres adapters | AC-05, AC-09 | [ADR-002](adr/ADR-002-concurrency.md) | `TestConcurrentReservationOnlyOneWins` (50 rounds), `TestAcceptRacingTimeoutHasOneWinner` |
 | P7 | Explicit state machines | Invalid or repeated transitions | [ride.go](../services/ride/internal/domain/ride.go), [driver.go](../services/driver/internal/domain/driver.go), [saga.go](../services/dispatch/internal/domain/saga.go) | AC-02, AC-06, AC-08 | [ADR-002](adr/ADR-002-concurrency.md) | `TestInvalidTransitions`, `TestDuplicateTransitionsAreNoOps` |
-| P8 | Idempotency key + stored response | A client retries `POST /rides` after a timeout | [rides.go](../services/ride/internal/usecase/rides.go) `CreateRide` | AC-01, AC-08 | [ADR-011](adr/ADR-011-api-and-identifiers.md) | `TestConcurrentDuplicateCreationCreatesOneRide` |
+| P8 | Idempotency key + stored response | A client retries `POST /rides` after a timeout | [rides.go](../services/ride/internal/usecase/rides.go) `CreateRide` | AC-01, AC-08 | [ADR-010](adr/ADR-010-api-and-identifiers.md) | `TestConcurrentDuplicateCreationCreatesOneRide` |
 | P9 | Database per service | Services must change and scale independently | `ride_db`, `driver_db`, `dispatch_db` | Team constraint T1 | [ADR-006](adr/ADR-006-service-architecture.md), [ADR-008](adr/ADR-008-data-stores.md) | `test/arch` (no cross-service imports) |
 | P10 | CQRS-style read model | Nearest-driver search must be fast and not load the reservation rows | [projection.go](../services/dispatch/internal/usecase/projection.go), [redis.go](../services/dispatch/internal/adapter/redis/redis.go) | AC-03, AC-04 | [ADR-001](adr/ADR-001-matching.md) | `TestIndexKeepsOnlyLatestAvailableDrivers` |
-| P11 | API gateway | One public address; internal endpoints hidden | [deploy/nginx.conf](../deploy/nginx.conf) | API surface | [ADR-010](adr/ADR-010-runtime-gateway-tooling.md) | e2e + Postman run through the gateway |
-| P12 | Clean Architecture | Business logic testable without infrastructure | `services/*/internal/{domain,usecase,adapter}`, `cmd/main.go` | Maintainability | [ADR-013](adr/ADR-013-clean-architecture.md) | [test/arch](../test/arch/arch_test.go) |
-| P13 | Unit of work via a transaction port | Lock + state + history + outbox must commit together, without pgx in use cases | [pkg/pgutil/pgutil.go](../pkg/pgutil/pgutil.go) `TxManager` | AC-08, AC-10 | [ADR-013](adr/ADR-013-clean-architecture.md) | `TestCreateRidePublishesRideRequested` |
+| P11 | API gateway | One public address; internal endpoints hidden | [deploy/nginx.conf](../deploy/nginx.conf) | API surface | [ADR-006](adr/ADR-006-service-architecture.md) | e2e + Postman run through the gateway |
+| P12 | Clean Architecture | Business logic testable without infrastructure | `services/*/internal/{domain,usecase,adapter}`, `cmd/main.go` | Maintainability | [ADR-012](adr/ADR-012-clean-architecture.md) | [test/arch](../test/arch/arch_test.go) |
+| P13 | Unit of work via a transaction port | Lock + state + history + outbox must commit together, without pgx in use cases | [pkg/pgutil/pgutil.go](../pkg/pgutil/pgutil.go) `TxManager` | AC-08, AC-10 | [ADR-012](adr/ADR-012-clean-architecture.md) | `TestCreateRidePublishesRideRequested` |
 | P14 | Correlation/causation ids + one trace per journey | "What happened to ride R001?" across services and minutes | [pkg/obs](../pkg/obs/), [envelope.go](../pkg/messaging/envelope.go) | Observability | [ADR-005](adr/ADR-005-observability.md) | `make trace-ride`, Tempo |
 
 ## 2. Where the patterns sit
@@ -371,13 +371,13 @@ Each service has its own database user and runs its own embedded migrations at s
 | Frameworks and drivers | `pkg/broker`, `pkg/pgutil`, `pkg/obs/otelsetup`, … | Outbox, relay, consumer, transactions, OTel SDK | Anything |
 | Composition root | `cmd/main.go` | Builds adapters, injects them into use cases, starts servers and workers | Everything |
 
-Examples of ports: ride-service declares `RideRepository`, `IdempotencyStore`, `Publisher`, `Inbox`, `TxManager`; dispatch-service declares `CandidateSource` (implemented by Redis), `DriverDirectory` (implemented by an HTTP client), `SagaRepository`, `OfferRepository`, … ([ADR-013 ports table](adr/ADR-013-clean-architecture.md#ports-per-service)).
+Examples of ports: ride-service declares `RideRepository`, `IdempotencyStore`, `Publisher`, `Inbox`, `TxManager`; dispatch-service declares `CandidateSource` (implemented by Redis), `DriverDirectory` (implemented by an HTTP client), `SagaRepository`, `OfferRepository`, … ([ADR-012 ports table](adr/ADR-012-clean-architecture.md#ports-per-service)).
 
 **Enforced in code.** [test/arch/arch_test.go](../test/arch/arch_test.go) runs with `make test` and fails if a domain package imports anything but the standard library and `pkg/geo`, if a domain or use-case package (even transitively) reaches pgx, franz-go, go-redis, the OTel SDK or `net/http`, if adapters import each other, or if the message contract depends on infrastructure. It caught real leaks during the refactor.
 
 **Without it.** Business rules tied to SQL and HTTP; flows that can only be tested end to end.
 
-**Trade-offs.** About 15 ports across three services, each with one production implementation; more files to navigate. Compared with 3-layer, hexagonal, onion and vertical slices in [ADR-013](adr/ADR-013-clean-architecture.md).
+**Trade-offs.** About 15 ports across three services, each with one production implementation; more files to navigate. Compared with 3-layer, hexagonal, onion and vertical slices in [ADR-012](adr/ADR-012-clean-architecture.md).
 
 **Proof.** The 4 architecture tests; ride use-case tests with in-memory fakes run in milliseconds without Docker.
 

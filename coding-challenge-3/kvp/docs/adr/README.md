@@ -13,9 +13,8 @@ Every ADR uses the same template: **context → decision drivers → comparison 
 | [007](ADR-007-language-and-libraries.md) | Language and libraries | Go 1.27; `net/http`, pgx, franz-go, go-redis, OpenTelemetry | T2 |
 | [008](ADR-008-data-stores.md) | Data stores | PostgreSQL 18 (truth), Redis 8 (disposable GEO index) | AC-06, AC-08, AC-09, T5 |
 | [009](ADR-009-message-broker.md) | Message broker | Redpanda (Kafka API) | AC-10, T5 |
-| [010](ADR-010-runtime-gateway-tooling.md) | Runtime, images, gateway | Colima + Docker Compose + lazydocker, distroless, nginx | T4 |
-| [011](ADR-011-api-and-identifiers.md) | API, idempotency keys, identifiers | REST + RFC 9457, `Idempotency-Key` stored with the response, UUIDv7, polling | AC-01, AC-05, AC-08 |
-| [012](ADR-012-testing-strategy.md) | Testing strategy | Pure unit + fakes + testcontainers + e2e + Postman + architecture test | §5 Testing |
-| [013](ADR-013-clean-architecture.md) | Code structure inside a service | Clean Architecture (domain → use cases + ports → adapters), enforced by a test | maintainability, testability |
+| [010](ADR-010-api-and-identifiers.md) | API, idempotency keys, identifiers | REST + RFC 9457, `Idempotency-Key` stored with the response, UUIDv7, polling | AC-01, AC-05, AC-08 |
+| [011](ADR-011-testing-strategy.md) | Testing strategy | Pure unit + fakes + testcontainers + e2e + Postman + architecture test | §5 Testing |
+| [012](ADR-012-clean-architecture.md) | Code structure inside a service | Clean Architecture (domain → use cases + ports → adapters), enforced by a test | maintainability, testability |
 
-**Read in this order if you have 20 minutes:** 006 (what the system is) → 003 (how it stays consistent) → 002 (how races are decided) → 004 (how messages are safe) → 001 (how drivers are picked) → 013 (how the code is organised).
+**Read in this order if you have 20 minutes:** 006 (what the system is) → 003 (how it stays consistent) → 002 (how races are decided) → 004 (how messages are safe) → 001 (how drivers are picked) → 012 (how the code is organised).

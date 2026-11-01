@@ -103,7 +103,7 @@ flowchart LR
 
 ## 4. Inside a service: Clean Architecture (C4 level 3)
 
-Every service has the same rings ([ADR-013](adr/ADR-013-clean-architecture.md)). Dependencies point inward only, and [test/arch](../test/arch/arch_test.go) enforces this on every `make test`.
+Every service has the same rings ([ADR-012](adr/ADR-012-clean-architecture.md)). Dependencies point inward only, and [test/arch](../test/arch/arch_test.go) enforces this on every `make test`.
 
 ```mermaid
 flowchart TB
@@ -155,7 +155,7 @@ flowchart TB
 
 ## 6. Public API
 
-All traffic goes through the gateway on `:8080`. Errors use RFC 9457 `application/problem+json` with a stable `code` ([ADR-011](adr/ADR-011-api-and-identifiers.md)).
+All traffic goes through the gateway on `:8080`. Errors use RFC 9457 `application/problem+json` with a stable `code` ([ADR-010](adr/ADR-010-api-and-identifiers.md)).
 
 | Method & path | Owner | Success | Errors | AC |
 |---|---|---|---|---|
@@ -421,10 +421,9 @@ Migrations are embedded in each service ([ride](../services/ride/internal/adapte
 | 7 | Language and libraries | Go 1.27, `net/http`, pgx, franz-go, go-redis | Java/Spring, Kotlin, .NET, Node, Python, Rust; Gin/Echo/Fiber; GORM/sqlc; sarama | [007](adr/ADR-007-language-and-libraries.md) |
 | 8 | Data stores | PostgreSQL 18, Redis 8 | MySQL, MongoDB, CockroachDB, DynamoDB, Cassandra; Valkey, Dragonfly | [008](adr/ADR-008-data-stores.md) |
 | 9 | Broker | Redpanda | Kafka, RabbitMQ, NATS JetStream, Redis Streams, Pulsar, SQS | [009](adr/ADR-009-message-broker.md) |
-| 10 | Runtime and gateway | Colima + Compose + lazydocker, distroless, nginx | Docker Desktop, OrbStack, Podman; kind/minikube; Traefik, Envoy, Kong | [010](adr/ADR-010-runtime-gateway-tooling.md) |
-| 11 | API and ids | REST + problem+json, Idempotency-Key in Postgres, UUIDv7, polling for offers | gRPC, GraphQL; Redis keys; UUIDv4, ULID, Snowflake; WebSocket/SSE | [011](adr/ADR-011-api-and-identifiers.md) |
-| 12 | Testing | Unit + fakes + testcontainers + e2e + Postman + architecture test | Mocks, in-memory fakes, embedded Postgres, k6, Pact | [012](adr/ADR-012-testing-strategy.md) |
-| 13 | Code structure | Clean Architecture per service | Single package, functional core + shell, 3-layer, hexagonal, onion, vertical slice | [013](adr/ADR-013-clean-architecture.md) |
+| 10 | API and ids | REST + problem+json, Idempotency-Key in Postgres, UUIDv7, polling for offers | gRPC, GraphQL; Redis keys; UUIDv4, ULID, Snowflake; WebSocket/SSE | [010](adr/ADR-010-api-and-identifiers.md) |
+| 11 | Testing | Unit + fakes + testcontainers + e2e + Postman + architecture test | Mocks, in-memory fakes, embedded Postgres, k6, Pact | [011](adr/ADR-011-testing-strategy.md) |
+| 12 | Code structure | Clean Architecture per service | Single package, functional core + shell, 3-layer, hexagonal, onion, vertical slice | [012](adr/ADR-012-clean-architecture.md) |
 
 ## 14. Repository layout
 
@@ -455,7 +454,7 @@ coding-challenge-3/kvp/
 | Area | Limitation | Impact | Next step |
 |---|---|---|---|
 | Consistency | Accept is synchronous on the offer, eventual on the ride: `200 ACCEPTED` is the saga's pivot, and the ride and driver statuses follow within milliseconds | A client reading the ride right after accepting may still see `DRIVER_ASSIGNED` | Return the expected final state, or let clients wait for `DRIVER_ACCEPTED` |
-| Driver experience | No push to drivers: drivers poll `GET /drivers/{id}/offer` (real-time delivery is out of scope) | Offer latency = poll interval | SSE or WebSocket, mobile push in production ([ADR-011](adr/ADR-011-api-and-identifiers.md)) |
+| Driver experience | No push to drivers: drivers poll `GET /drivers/{id}/offer` (real-time delivery is out of scope) | Offer latency = poll interval | SSE or WebSocket, mobile push in production ([ADR-010](adr/ADR-010-api-and-identifiers.md)) |
 | Waiting rides | A ride with no eligible driver waits in `MATCHING` until cancelled; no max-wait auto-cancel | Rides can wait forever | Auto-cancel after a configurable time |
 | Messaging | One outbox relay per service instance: per-key ordering assumes a single instance | Replicas could publish out of order | Relay leader election or CDC ([ADR-004](adr/ADR-004-messaging-outbox-inbox.md)) |
 | Messaging | Transient outages longer than the retry budget (~10 s) send messages to the DLQ | Manual `make replay-dlq` needed | Retry topics with longer delays; alert on DLQ depth |

@@ -1,8 +1,8 @@
-# ADR-013: Code structure: Clean Architecture inside each service
+# ADR-012: Code structure: Clean Architecture inside each service
 
 * **Status:** Accepted (supersedes the earlier "functional core + one app package" layout)
 * **Date:** 2026-11-01
-* **Related:** [ADR-006 service architecture](ADR-006-service-architecture.md) (how the *system* is split), [ADR-012 testing](ADR-012-testing-strategy.md), [architecture §14](../architecture.md#14-repository-layout) (layout)
+* **Related:** [ADR-006 service architecture](ADR-006-service-architecture.md) (how the *system* is split), [ADR-011 testing](ADR-011-testing-strategy.md), [architecture §14](../architecture.md#14-repository-layout) (layout)
 
 ## Context
 
