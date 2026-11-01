@@ -1,0 +1,5128 @@
+{
+  "info": {
+    "name": "Ride-Hailing Dispatch (kvp)",
+    "description": "Scenarios for Coding Challenge #3. Start the stack first (`make up` in coding-challenge-3/kvp).\n\n* Run the whole collection with the **Runner** (keep the order), or one folder at a time.\n* Every folder is self-contained: its first request picks a random spot on the map and creates its own drivers through the driver-service fixture API (`{{driverServiceUrl}}/internal/drivers/...`), so folders never interfere.\n* Dispatch is asynchronous. Requests that check the result first wait (pre-request script, max 10–45 s) until the expected state is reached.\n* Variables: `baseUrl` (gateway, default http://localhost:8080) and `driverServiceUrl` (http://localhost:8082).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "driverServiceUrl",
+      "value": "http://localhost:8082"
+    }
+  ],
+  "item": [
+    {
+      "name": "00 · Health & seeded data",
+      "description": "Check the stack is up and look at the seeded records (passengers P001–P010, drivers D001–D020).",
+      "item": [
+        {
+          "name": "Gateway health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/healthz",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "healthz"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Seeded driver D001 (AVAILABLE near Ben Thanh)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/D001",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "D001"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('has a location', () => pm.expect(pm.response.json().latitude).to.be.a('number'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Seeded driver D011 (OFFLINE)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/D011",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "D011"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown driver → 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/NOPE",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "NOPE"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 404', () => pm.response.to.have.status(404));",
+                  "pm.test('error code DRIVER_NOT_FOUND', () => pm.expect(pm.response.json().code).to.eql('DRIVER_NOT_FOUND'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01 · Happy path: request → offer → accept → complete",
+      "description": "AC-01, AC-02, AC-04, AC-05, AC-06, AC-10. Three drivers at 300 m, 1.5 km and 3.2 km; the nearest within 2 km gets the offer.",
+      "item": [
+        {
+          "name": "Setup: driver A ~300 m (AVAILABLE)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{driverServiceUrl}}/internal/drivers/{{driverA}}",
+              "host": [
+                "{{driverServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "drivers",
+                "{{driverA}}"
+              ]
+            },
+            "description": "Development/test fixture on driver-service (port 8082). Not exposed by the gateway.",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"status\": \"AVAILABLE\", \"latitude\": {{driverALat}}, \"longitude\": {{lng}} }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Each scenario uses its own random spot on the map so scenarios never interfere.",
+                  "const run = Date.now().toString(36);",
+                  "const lat = -50 + Math.random() * 100, lng = -170 + Math.random() * 340;",
+                  "pm.collectionVariables.set('run', run);",
+                  "pm.collectionVariables.set('lat', lat.toFixed(6));",
+                  "pm.collectionVariables.set('lng', lng.toFixed(6));",
+                  "pm.collectionVariables.set('destLat', (lat + 0.05).toFixed(6));",
+                  "// a point ~m metres north of the pickup (1° latitude ≈ 111.2 km)",
+                  "const north = (m) => (lat + m / 111195).toFixed(6);",
+                  "pm.collectionVariables.set('driverA', 'PM-A-' + run);  // ~300 m",
+                  "pm.collectionVariables.set('driverALat', north(300));",
+                  "pm.collectionVariables.set('driverB', 'PM-B-' + run);  // ~1500 m",
+                  "pm.collectionVariables.set('driverBLat', north(1500));",
+                  "pm.collectionVariables.set('driverC', 'PM-C-' + run);  // ~3200 m",
+                  "pm.collectionVariables.set('driverCLat', north(3200));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Setup: driver B ~1.5 km AVAILABLE (fixture API)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{driverServiceUrl}}/internal/drivers/{{driverB}}",
+              "host": [
+                "{{driverServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "drivers",
+                "{{driverB}}"
+              ]
+            },
+            "description": "Development/test fixture on driver-service (port 8082). Not exposed by the gateway; driver registration is out of scope.",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"status\": \"AVAILABLE\", \"latitude\": {{driverBLat}}, \"longitude\": {{lng}} }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = AVAILABLE', () => pm.expect(pm.response.json().status).to.eql(\"AVAILABLE\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Setup: driver C ~3.2 km (outside 2 km radius) AVAILABLE (fixture API)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{driverServiceUrl}}/internal/drivers/{{driverC}}",
+              "host": [
+                "{{driverServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "drivers",
+                "{{driverC}}"
+              ]
+            },
+            "description": "Development/test fixture on driver-service (port 8082). Not exposed by the gateway; driver registration is out of scope.",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"status\": \"AVAILABLE\", \"latitude\": {{driverCLat}}, \"longitude\": {{lng}} }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = AVAILABLE', () => pm.expect(pm.response.json().status).to.eql(\"AVAILABLE\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Passenger requests a ride",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-rideId"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"passengerId\": \"P001\",\n  \"pickup\": { \"latitude\": {{lat}}, \"longitude\": {{lng}} },\n  \"destination\": { \"latitude\": {{destLat}}, \"longitude\": {{lng}} }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('starts in REQUESTED', () => pm.expect(pm.response.json().status).to.eql(\"REQUESTED\"));",
+                  "pm.test('has rideId', () => pm.expect(pm.response.json().rideId).to.be.a('string'));",
+                  "pm.collectionVariables.set('rideId', pm.response.json().rideId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ride is DRIVER_ASSIGNED to the nearest driver A",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the ride is DRIVER_ASSIGNED.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/rides/{{rideId}}');",
+                  "const ok = (b) => b.status === 'DRIVER_ASSIGNED' && b.assignedDriverId === pm.collectionVariables.get('driverA');",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the ride is DRIVER_ASSIGNED', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = DRIVER_ASSIGNED', () => pm.expect(pm.response.json().status).to.eql(\"DRIVER_ASSIGNED\"));",
+                  "pm.test('assignedDriverId', () => pm.expect(pm.response.json().assignedDriverId).to.eql(pm.collectionVariables.get('driverA')));",
+                  "pm.test('B (1.5 km) and C (3.2 km, outside radius) were not chosen', () => pm.expect(pm.response.json().assignedDriverId).to.not.be.oneOf([pm.collectionVariables.get('driverB'), pm.collectionVariables.get('driverC')]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Driver A sees the pending offer",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverA}}/offer",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverA}}",
+                "offer"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = PENDING', () => pm.expect(pm.response.json().status).to.eql(\"PENDING\"));",
+                  "pm.test('offer is for this ride', () => pm.expect(pm.response.json().rideId).to.eql(pm.collectionVariables.get('rideId')));",
+                  "pm.test('expires in ~30 s', () => {",
+                  "  const o = pm.response.json();",
+                  "  const s = (new Date(o.expiresAt) - new Date(o.createdAt)) / 1000;",
+                  "  pm.expect(s).to.be.within(29, 31);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Driver A is OFFERED",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverA}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverA}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the driver is OFFERED.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/drivers/{{driverA}}');",
+                  "const ok = (b) => b.status === 'OFFERED';",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the driver is OFFERED', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = OFFERED', () => pm.expect(pm.response.json().status).to.eql(\"OFFERED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Driver C (outside radius) has no offer → 204",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverC}}/offer",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverC}}",
+                "offer"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Driver A accepts",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/offers/{{driverA}}/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "offers",
+                "{{driverA}}",
+                "accept"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = ACCEPTED', () => pm.expect(pm.response.json().status).to.eql(\"ACCEPTED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ride is DRIVER_ACCEPTED",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the ride is DRIVER_ACCEPTED.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/rides/{{rideId}}');",
+                  "const ok = (b) => b.status === 'DRIVER_ACCEPTED' && b.assignedDriverId === pm.collectionVariables.get('driverA');",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the ride is DRIVER_ACCEPTED', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = DRIVER_ACCEPTED', () => pm.expect(pm.response.json().status).to.eql(\"DRIVER_ACCEPTED\"));",
+                  "pm.test('assignedDriverId', () => pm.expect(pm.response.json().assignedDriverId).to.eql(pm.collectionVariables.get('driverA')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Driver A is BUSY",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverA}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverA}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the driver is BUSY.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/drivers/{{driverA}}');",
+                  "const ok = (b) => b.status === 'BUSY';",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the driver is BUSY', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = BUSY', () => pm.expect(pm.response.json().status).to.eql(\"BUSY\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Driver completes the ride",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/complete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "complete"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = COMPLETED', () => pm.expect(pm.response.json().status).to.eql(\"COMPLETED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Driver A is AVAILABLE again",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverA}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverA}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the driver is AVAILABLE.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/drivers/{{driverA}}');",
+                  "const ok = (b) => b.status === 'AVAILABLE';",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the driver is AVAILABLE', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = AVAILABLE', () => pm.expect(pm.response.json().status).to.eql(\"AVAILABLE\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "History: every status change",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "history"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('REQUESTED → MATCHING → DRIVER_ASSIGNED → DRIVER_ACCEPTED → COMPLETED', () => {",
+                  "  const to = pm.response.json().transitions.map(t => t.to);",
+                  "  pm.expect(to).to.eql(['REQUESTED', 'MATCHING', 'DRIVER_ASSIGNED', 'DRIVER_ACCEPTED', 'COMPLETED']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Dispatch view: saga, offers, steps",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/dispatch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "dispatch"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('saga COMPLETED', () => pm.expect(pm.response.json().saga.status).to.eql('COMPLETED'));",
+                  "pm.test('one offer, ACCEPTED by driver A', () => {",
+                  "  const o = pm.response.json().offers;",
+                  "  pm.expect(o.length).to.eql(1);",
+                  "  pm.expect(o[0].status).to.eql('ACCEPTED');",
+                  "  pm.expect(o[0].driverId).to.eql(pm.collectionVariables.get('driverA'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 · Idempotent ride creation",
+      "description": "AC-01, AC-08. Repeating a request with the same Idempotency-Key returns the original ride; reusing the key with another body is rejected.",
+      "item": [
+        {
+          "name": "Setup: new area + key",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/healthz",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "healthz"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Each scenario uses its own random spot on the map so scenarios never interfere.",
+                  "const run = Date.now().toString(36);",
+                  "const lat = -50 + Math.random() * 100, lng = -170 + Math.random() * 340;",
+                  "pm.collectionVariables.set('run', run);",
+                  "pm.collectionVariables.set('lat', lat.toFixed(6));",
+                  "pm.collectionVariables.set('lng', lng.toFixed(6));",
+                  "pm.collectionVariables.set('destLat', (lat + 0.05).toFixed(6));",
+                  "// a point ~m metres north of the pickup (1° latitude ≈ 111.2 km)",
+                  "const north = (m) => (lat + m / 111195).toFixed(6);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create ride (Idempotency-Key = {{run}}-rideId)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-rideId"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"passengerId\": \"P001\",\n  \"pickup\": { \"latitude\": {{lat}}, \"longitude\": {{lng}} },\n  \"destination\": { \"latitude\": {{destLat}}, \"longitude\": {{lng}} }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('starts in REQUESTED', () => pm.expect(pm.response.json().status).to.eql(\"REQUESTED\"));",
+                  "pm.test('has rideId', () => pm.expect(pm.response.json().rideId).to.be.a('string'));",
+                  "pm.collectionVariables.set('rideId', pm.response.json().rideId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Same key + same body → original ride, no new ride",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-rideId"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"passengerId\": \"P001\",\n  \"pickup\": { \"latitude\": {{lat}}, \"longitude\": {{lng}} },\n  \"destination\": { \"latitude\": {{destLat}}, \"longitude\": {{lng}} }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('same rideId', () => pm.expect(pm.response.json().rideId).to.eql(pm.collectionVariables.get('rideId')));",
+                  "pm.test('Idempotent-Replayed: true', () => pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('true'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Same key + same body, third time",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-rideId"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"passengerId\": \"P001\",\n  \"pickup\": { \"latitude\": {{lat}}, \"longitude\": {{lng}} },\n  \"destination\": { \"latitude\": {{destLat}}, \"longitude\": {{lng}} }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('same rideId', () => pm.expect(pm.response.json().rideId).to.eql(pm.collectionVariables.get('rideId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Same key + different body → 422 IDEMPOTENCY_KEY_REUSED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-rideId"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"passengerId\": \"P002\",\n  \"pickup\": { \"latitude\": {{lat}}, \"longitude\": {{lng}} },\n  \"destination\": { \"latitude\": {{destLat}}, \"longitude\": {{lng}} }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 422', () => pm.response.to.have.status(422));",
+                  "pm.test('error code IDEMPOTENCY_KEY_REUSED', () => pm.expect(pm.response.json().code).to.eql('IDEMPOTENCY_KEY_REUSED'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "No Idempotency-Key → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"passengerId\": \"P001\",\n  \"pickup\": { \"latitude\": {{lat}}, \"longitude\": {{lng}} },\n  \"destination\": { \"latitude\": {{destLat}}, \"longitude\": {{lng}} }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 400', () => pm.response.to.have.status(400));",
+                  "pm.test('error code IDEMPOTENCY_KEY_REQUIRED', () => pm.expect(pm.response.json().code).to.eql('IDEMPOTENCY_KEY_REQUIRED'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Created ride can be retrieved",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('same ride', () => pm.expect(pm.response.json().rideId).to.eql(pm.collectionVariables.get('rideId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cleanup: cancel the ride",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "cancel"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 · Validation",
+      "description": "AC-01, AC-03. Invalid input is rejected before any matching.",
+      "item": [
+        {
+          "name": "Latitude 91 → 422",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"passengerId\": \"P001\", \"pickup\": { \"latitude\": 91, \"longitude\": 106.7 }, \"destination\": { \"latitude\": 10.8, \"longitude\": 106.6 } }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 422', () => pm.response.to.have.status(422));",
+                  "pm.test('error code INVALID_COORDINATES', () => pm.expect(pm.response.json().code).to.eql('INVALID_COORDINATES'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Latitude -90.5 → 422",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"passengerId\": \"P001\", \"pickup\": { \"latitude\": 10.7, \"longitude\": 106.7 }, \"destination\": { \"latitude\": -90.5, \"longitude\": 106.6 } }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 422', () => pm.response.to.have.status(422));",
+                  "pm.test('error code INVALID_COORDINATES', () => pm.expect(pm.response.json().code).to.eql('INVALID_COORDINATES'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Longitude 180.1 → 422",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"passengerId\": \"P001\", \"pickup\": { \"latitude\": 10.7, \"longitude\": 180.1 }, \"destination\": { \"latitude\": 10.8, \"longitude\": 106.6 } }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 422', () => pm.response.to.have.status(422));",
+                  "pm.test('error code INVALID_COORDINATES', () => pm.expect(pm.response.json().code).to.eql('INVALID_COORDINATES'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Missing longitude → 422",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"passengerId\": \"P001\", \"pickup\": { \"latitude\": 10.7 }, \"destination\": { \"latitude\": 10.8, \"longitude\": 106.6 } }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 422', () => pm.response.to.have.status(422));",
+                  "pm.test('error code INVALID_COORDINATES', () => pm.expect(pm.response.json().code).to.eql('INVALID_COORDINATES'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Missing destination → 422",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"passengerId\": \"P001\", \"pickup\": { \"latitude\": 10.7, \"longitude\": 106.7 } }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 422', () => pm.response.to.have.status(422));",
+                  "pm.test('error code INVALID_COORDINATES', () => pm.expect(pm.response.json().code).to.eql('INVALID_COORDINATES'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Missing passengerId → 422",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"pickup\": { \"latitude\": 10.7, \"longitude\": 106.7 }, \"destination\": { \"latitude\": 10.8, \"longitude\": 106.6 } }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 422', () => pm.response.to.have.status(422));",
+                  "pm.test('error code PASSENGER_REQUIRED', () => pm.expect(pm.response.json().code).to.eql('PASSENGER_REQUIRED'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown passenger P999 → 422",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"passengerId\": \"P999\", \"pickup\": { \"latitude\": 10.7, \"longitude\": 106.7 }, \"destination\": { \"latitude\": 10.8, \"longitude\": 106.6 } }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 422', () => pm.response.to.have.status(422));",
+                  "pm.test('error code UNKNOWN_PASSENGER', () => pm.expect(pm.response.json().code).to.eql('UNKNOWN_PASSENGER'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Malformed JSON → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"passengerId\": ",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 400', () => pm.response.to.have.status(400));",
+                  "pm.test('error code INVALID_JSON', () => pm.expect(pm.response.json().code).to.eql('INVALID_JSON'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Driver location latitude 95 → 422",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/D001/location",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "D001",
+                "location"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"latitude\": 95, \"longitude\": 106.7 }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 422', () => pm.response.to.have.status(422));",
+                  "pm.test('error code INVALID_COORDINATES', () => pm.expect(pm.response.json().code).to.eql('INVALID_COORDINATES'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Driver availability BUSY (not allowed via API) → 422",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/D011/availability",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "D011",
+                "availability"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"status\": \"BUSY\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 422', () => pm.response.to.have.status(422));",
+                  "pm.test('error code INVALID_STATUS', () => pm.expect(pm.response.json().code).to.eql('INVALID_STATUS'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown ride → 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/00000000-0000-7000-8000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "00000000-0000-7000-8000-000000000000"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 404', () => pm.response.to.have.status(404));",
+                  "pm.test('error code RIDE_NOT_FOUND', () => pm.expect(pm.response.json().code).to.eql('RIDE_NOT_FOUND'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "/internal is not exposed by the gateway → 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/internal/drivers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "drivers"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 · Reject → rematch → exclusion",
+      "description": "AC-05, AC-06, AC-07. A rejected driver returns to AVAILABLE, is never offered this ride again, and the next driver is offered. With nobody left the ride stays MATCHING with no assignedDriverId.",
+      "item": [
+        {
+          "name": "Setup: driver A ~200 m",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{driverServiceUrl}}/internal/drivers/{{driverA}}",
+              "host": [
+                "{{driverServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "drivers",
+                "{{driverA}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"status\": \"AVAILABLE\", \"latitude\": {{driverALat}}, \"longitude\": {{lng}} }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Each scenario uses its own random spot on the map so scenarios never interfere.",
+                  "const run = Date.now().toString(36);",
+                  "const lat = -50 + Math.random() * 100, lng = -170 + Math.random() * 340;",
+                  "pm.collectionVariables.set('run', run);",
+                  "pm.collectionVariables.set('lat', lat.toFixed(6));",
+                  "pm.collectionVariables.set('lng', lng.toFixed(6));",
+                  "pm.collectionVariables.set('destLat', (lat + 0.05).toFixed(6));",
+                  "// a point ~m metres north of the pickup (1° latitude ≈ 111.2 km)",
+                  "const north = (m) => (lat + m / 111195).toFixed(6);",
+                  "pm.collectionVariables.set('driverA', 'PM-A-' + run);  // ~200 m",
+                  "pm.collectionVariables.set('driverALat', north(200));",
+                  "pm.collectionVariables.set('driverB', 'PM-B-' + run);  // ~900 m",
+                  "pm.collectionVariables.set('driverBLat', north(900));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Setup: driver B ~900 m AVAILABLE (fixture API)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{driverServiceUrl}}/internal/drivers/{{driverB}}",
+              "host": [
+                "{{driverServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "drivers",
+                "{{driverB}}"
+              ]
+            },
+            "description": "Development/test fixture on driver-service (port 8082). Not exposed by the gateway; driver registration is out of scope.",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"status\": \"AVAILABLE\", \"latitude\": {{driverBLat}}, \"longitude\": {{lng}} }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = AVAILABLE', () => pm.expect(pm.response.json().status).to.eql(\"AVAILABLE\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Passenger requests a ride",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-rideId"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"passengerId\": \"P001\",\n  \"pickup\": { \"latitude\": {{lat}}, \"longitude\": {{lng}} },\n  \"destination\": { \"latitude\": {{destLat}}, \"longitude\": {{lng}} }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('starts in REQUESTED', () => pm.expect(pm.response.json().status).to.eql(\"REQUESTED\"));",
+                  "pm.test('has rideId', () => pm.expect(pm.response.json().rideId).to.be.a('string'));",
+                  "pm.collectionVariables.set('rideId', pm.response.json().rideId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Offer goes to A (nearest)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the ride is DRIVER_ASSIGNED.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/rides/{{rideId}}');",
+                  "const ok = (b) => b.status === 'DRIVER_ASSIGNED' && b.assignedDriverId === pm.collectionVariables.get('driverA');",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the ride is DRIVER_ASSIGNED', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = DRIVER_ASSIGNED', () => pm.expect(pm.response.json().status).to.eql(\"DRIVER_ASSIGNED\"));",
+                  "pm.test('assignedDriverId', () => pm.expect(pm.response.json().assignedDriverId).to.eql(pm.collectionVariables.get('driverA')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A rejects",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/offers/{{driverA}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "offers",
+                "{{driverA}}",
+                "reject"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = REJECTED', () => pm.expect(pm.response.json().status).to.eql(\"REJECTED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A rejects again → same result (idempotent)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/offers/{{driverA}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "offers",
+                "{{driverA}}",
+                "reject"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Idempotent-Replayed: true', () => pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('true'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rematched: ride now DRIVER_ASSIGNED to B",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the ride is DRIVER_ASSIGNED.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/rides/{{rideId}}');",
+                  "const ok = (b) => b.status === 'DRIVER_ASSIGNED' && b.assignedDriverId === pm.collectionVariables.get('driverB');",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the ride is DRIVER_ASSIGNED', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = DRIVER_ASSIGNED', () => pm.expect(pm.response.json().status).to.eql(\"DRIVER_ASSIGNED\"));",
+                  "pm.test('assignedDriverId', () => pm.expect(pm.response.json().assignedDriverId).to.eql(pm.collectionVariables.get('driverB')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A is AVAILABLE again",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverA}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverA}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the driver is AVAILABLE.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/drivers/{{driverA}}');",
+                  "const ok = (b) => b.status === 'AVAILABLE';",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the driver is AVAILABLE', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = AVAILABLE', () => pm.expect(pm.response.json().status).to.eql(\"AVAILABLE\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A cannot accept any more → 409 OFFER_NOT_CURRENT",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/offers/{{driverA}}/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "offers",
+                "{{driverA}}",
+                "accept"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 409', () => pm.response.to.have.status(409));",
+                  "pm.test('error code OFFER_NOT_CURRENT', () => pm.expect(pm.response.json().code).to.eql('OFFER_NOT_CURRENT'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B rejects too",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/offers/{{driverB}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "offers",
+                "{{driverB}}",
+                "reject"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "No eligible driver left: ride stays MATCHING, no driver (A is available but excluded)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the ride is MATCHING.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/rides/{{rideId}}');",
+                  "const ok = (b) => b.status === 'MATCHING' && b.assignedDriverId === null;",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the ride is MATCHING', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = MATCHING', () => pm.expect(pm.response.json().status).to.eql(\"MATCHING\"));",
+                  "pm.test('assignedDriverId', () => pm.expect(pm.response.json().assignedDriverId).to.eql(null));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Dispatch view: A and B excluded for this ride",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/dispatch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "dispatch"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('both excluded', () => {",
+                  "  const ex = pm.response.json().exclusions;",
+                  "  pm.expect(ex).to.have.property(pm.collectionVariables.get('driverA'));",
+                  "  pm.expect(ex).to.have.property(pm.collectionVariables.get('driverB'));",
+                  "});",
+                  "pm.test('saga waiting for a driver', () => pm.expect(pm.response.json().saga.status).to.be.oneOf(['WAITING_FOR_DRIVER', 'MATCHING']));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cleanup: cancel the ride",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "cancel"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "05 · Duplicate driver acceptance",
+      "description": "AC-05, AC-08. Repeating DriverAccepted must not produce an invalid state.",
+      "item": [
+        {
+          "name": "Setup: driver A ~100 m",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{driverServiceUrl}}/internal/drivers/{{driverA}}",
+              "host": [
+                "{{driverServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "drivers",
+                "{{driverA}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"status\": \"AVAILABLE\", \"latitude\": {{driverALat}}, \"longitude\": {{lng}} }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Each scenario uses its own random spot on the map so scenarios never interfere.",
+                  "const run = Date.now().toString(36);",
+                  "const lat = -50 + Math.random() * 100, lng = -170 + Math.random() * 340;",
+                  "pm.collectionVariables.set('run', run);",
+                  "pm.collectionVariables.set('lat', lat.toFixed(6));",
+                  "pm.collectionVariables.set('lng', lng.toFixed(6));",
+                  "pm.collectionVariables.set('destLat', (lat + 0.05).toFixed(6));",
+                  "// a point ~m metres north of the pickup (1° latitude ≈ 111.2 km)",
+                  "const north = (m) => (lat + m / 111195).toFixed(6);",
+                  "pm.collectionVariables.set('driverA', 'PM-A-' + run);  // ~100 m",
+                  "pm.collectionVariables.set('driverALat', north(100));",
+                  "pm.collectionVariables.set('driverB', 'PM-B-' + run);  // ~50000 m",
+                  "pm.collectionVariables.set('driverBLat', north(50000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Passenger requests a ride",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-rideId"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"passengerId\": \"P001\",\n  \"pickup\": { \"latitude\": {{lat}}, \"longitude\": {{lng}} },\n  \"destination\": { \"latitude\": {{destLat}}, \"longitude\": {{lng}} }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('starts in REQUESTED', () => pm.expect(pm.response.json().status).to.eql(\"REQUESTED\"));",
+                  "pm.test('has rideId', () => pm.expect(pm.response.json().rideId).to.be.a('string'));",
+                  "pm.collectionVariables.set('rideId', pm.response.json().rideId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Offer goes to A",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the ride is DRIVER_ASSIGNED.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/rides/{{rideId}}');",
+                  "const ok = (b) => b.status === 'DRIVER_ASSIGNED' && b.assignedDriverId === pm.collectionVariables.get('driverA');",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the ride is DRIVER_ASSIGNED', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = DRIVER_ASSIGNED', () => pm.expect(pm.response.json().status).to.eql(\"DRIVER_ASSIGNED\"));",
+                  "pm.test('assignedDriverId', () => pm.expect(pm.response.json().assignedDriverId).to.eql(pm.collectionVariables.get('driverA')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A accepts",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/offers/{{driverA}}/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "offers",
+                "{{driverA}}",
+                "accept"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = ACCEPTED', () => pm.expect(pm.response.json().status).to.eql(\"ACCEPTED\"));",
+                  "pm.collectionVariables.set('offerId', pm.response.json().offerId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A accepts again → 200, same offer, nothing changes",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/offers/{{driverA}}/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "offers",
+                "{{driverA}}",
+                "accept"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('same offer', () => pm.expect(pm.response.json().offerId).to.eql(pm.collectionVariables.get('offerId')));",
+                  "pm.test('Idempotent-Replayed: true', () => pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('true'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A accepts a third time",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/offers/{{driverA}}/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "offers",
+                "{{driverA}}",
+                "accept"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Another driver cannot accept → 404 OFFER_NOT_FOUND",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/offers/{{driverB}}/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "offers",
+                "{{driverB}}",
+                "accept"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 404', () => pm.response.to.have.status(404));",
+                  "pm.test('error code OFFER_NOT_FOUND', () => pm.expect(pm.response.json().code).to.eql('OFFER_NOT_FOUND'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ride is DRIVER_ACCEPTED (valid state)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the ride is DRIVER_ACCEPTED.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/rides/{{rideId}}');",
+                  "const ok = (b) => b.status === 'DRIVER_ACCEPTED' && b.assignedDriverId === pm.collectionVariables.get('driverA');",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the ride is DRIVER_ACCEPTED', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = DRIVER_ACCEPTED', () => pm.expect(pm.response.json().status).to.eql(\"DRIVER_ACCEPTED\"));",
+                  "pm.test('assignedDriverId', () => pm.expect(pm.response.json().assignedDriverId).to.eql(pm.collectionVariables.get('driverA')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A is BUSY (only once)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverA}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverA}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the driver is BUSY.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/drivers/{{driverA}}');",
+                  "const ok = (b) => b.status === 'BUSY';",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the driver is BUSY', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = BUSY', () => pm.expect(pm.response.json().status).to.eql(\"BUSY\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "History has exactly one DRIVER_ACCEPTED",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "history"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('one acceptance', () => pm.expect(pm.response.json().transitions.filter(t => t.to === 'DRIVER_ACCEPTED').length).to.eql(1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cleanup: complete",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/complete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "complete"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "06 · Two rides, one driver (concurrency)",
+      "description": "AC-09. Two rides compete for the only nearby driver: exactly one gets the offer, the other stays MATCHING. Postman sends requests one after another; true parallel races are covered by the Go tests (50 rounds against Postgres) and `make demo` step 9.",
+      "item": [
+        {
+          "name": "Setup: the only driver A ~150 m",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{driverServiceUrl}}/internal/drivers/{{driverA}}",
+              "host": [
+                "{{driverServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "drivers",
+                "{{driverA}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"status\": \"AVAILABLE\", \"latitude\": {{driverALat}}, \"longitude\": {{lng}} }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Each scenario uses its own random spot on the map so scenarios never interfere.",
+                  "const run = Date.now().toString(36);",
+                  "const lat = -50 + Math.random() * 100, lng = -170 + Math.random() * 340;",
+                  "pm.collectionVariables.set('run', run);",
+                  "pm.collectionVariables.set('lat', lat.toFixed(6));",
+                  "pm.collectionVariables.set('lng', lng.toFixed(6));",
+                  "pm.collectionVariables.set('destLat', (lat + 0.05).toFixed(6));",
+                  "// a point ~m metres north of the pickup (1° latitude ≈ 111.2 km)",
+                  "const north = (m) => (lat + m / 111195).toFixed(6);",
+                  "pm.collectionVariables.set('driverA', 'PM-A-' + run);  // ~150 m",
+                  "pm.collectionVariables.set('driverALat', north(150));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ride 1 requested",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-ride1"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"passengerId\": \"P001\",\n  \"pickup\": { \"latitude\": {{lat}}, \"longitude\": {{lng}} },\n  \"destination\": { \"latitude\": {{destLat}}, \"longitude\": {{lng}} }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('starts in REQUESTED', () => pm.expect(pm.response.json().status).to.eql(\"REQUESTED\"));",
+                  "pm.test('has rideId', () => pm.expect(pm.response.json().rideId).to.be.a('string'));",
+                  "pm.collectionVariables.set('ride1', pm.response.json().rideId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ride 2 requested right after (both sagas race for A)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-ride2"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"passengerId\": \"P001\",\n  \"pickup\": { \"latitude\": {{lat}}, \"longitude\": {{lng}} },\n  \"destination\": { \"latitude\": {{destLat}}, \"longitude\": {{lng}} }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('starts in REQUESTED', () => pm.expect(pm.response.json().status).to.eql(\"REQUESTED\"));",
+                  "pm.test('has rideId', () => pm.expect(pm.response.json().rideId).to.be.a('string'));",
+                  "pm.collectionVariables.set('ride2', pm.response.json().rideId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Driver A holds exactly one offer",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverA}}/offer",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverA}}",
+                "offer"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Wait until both rides are settled, then record which one holds the driver.",
+                  "const base = pm.variables.replaceIn('{{baseUrl}}/rides/');",
+                  "const ids = [pm.collectionVariables.get('ride1'), pm.collectionVariables.get('ride2')];",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(base + ids[0], (e1, r1) => {",
+                  "    pm.sendRequest(base + ids[1], (e2, r2) => {",
+                  "      const a = r1.json(), b = r2.json();",
+                  "      const settled = [a.status, b.status].sort().join() === 'DRIVER_ASSIGNED,MATCHING';",
+                  "      if (settled) {",
+                  "        const winner = a.status === 'DRIVER_ASSIGNED' ? ids[0] : ids[1];",
+                  "        pm.collectionVariables.set('winner', winner);",
+                  "        pm.collectionVariables.set('loser', winner === ids[0] ? ids[1] : ids[0]);",
+                  "        return;",
+                  "      }",
+                  "      if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    });",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('offer belongs to the winning ride', () => pm.expect(pm.response.json().rideId).to.eql(pm.collectionVariables.get('winner')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Winner ride is DRIVER_ASSIGNED to A",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{winner}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{winner}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the ride is DRIVER_ASSIGNED.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/rides/{{winner}}');",
+                  "const ok = (b) => b.status === 'DRIVER_ASSIGNED' && b.assignedDriverId === pm.collectionVariables.get('driverA');",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the ride is DRIVER_ASSIGNED', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = DRIVER_ASSIGNED', () => pm.expect(pm.response.json().status).to.eql(\"DRIVER_ASSIGNED\"));",
+                  "pm.test('assignedDriverId', () => pm.expect(pm.response.json().assignedDriverId).to.eql(pm.collectionVariables.get('driverA')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Loser ride stays MATCHING with no driver",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{loser}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{loser}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the ride is MATCHING.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/rides/{{loser}}');",
+                  "const ok = (b) => b.status === 'MATCHING' && b.assignedDriverId === null;",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the ride is MATCHING', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = MATCHING', () => pm.expect(pm.response.json().status).to.eql(\"MATCHING\"));",
+                  "pm.test('assignedDriverId', () => pm.expect(pm.response.json().assignedDriverId).to.eql(null));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A is OFFERED (once)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverA}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverA}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the driver is OFFERED.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/drivers/{{driverA}}');",
+                  "const ok = (b) => b.status === 'OFFERED';",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the driver is OFFERED', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = OFFERED', () => pm.expect(pm.response.json().status).to.eql(\"OFFERED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Winner's passenger cancels",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{winner}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{winner}}",
+                "cancel"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A is released and now offered to the waiting ride",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{loser}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{loser}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 15 s) until the ride is DRIVER_ASSIGNED.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/rides/{{loser}}');",
+                  "const ok = (b) => b.status === 'DRIVER_ASSIGNED' && b.assignedDriverId === pm.collectionVariables.get('driverA');",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the ride is DRIVER_ASSIGNED', body);",
+                  "  });",
+                  "})(60);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = DRIVER_ASSIGNED', () => pm.expect(pm.response.json().status).to.eql(\"DRIVER_ASSIGNED\"));",
+                  "pm.test('assignedDriverId', () => pm.expect(pm.response.json().assignedDriverId).to.eql(pm.collectionVariables.get('driverA')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cleanup: cancel the other ride",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{loser}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{loser}}",
+                "cancel"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "07 · Cancel releases the driver",
+      "description": "AC-02, AC-05, AC-06. Cancelling a pending offer returns the driver from OFFERED to AVAILABLE.",
+      "item": [
+        {
+          "name": "Setup: driver A ~100 m",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{driverServiceUrl}}/internal/drivers/{{driverA}}",
+              "host": [
+                "{{driverServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "drivers",
+                "{{driverA}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"status\": \"AVAILABLE\", \"latitude\": {{driverALat}}, \"longitude\": {{lng}} }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Each scenario uses its own random spot on the map so scenarios never interfere.",
+                  "const run = Date.now().toString(36);",
+                  "const lat = -50 + Math.random() * 100, lng = -170 + Math.random() * 340;",
+                  "pm.collectionVariables.set('run', run);",
+                  "pm.collectionVariables.set('lat', lat.toFixed(6));",
+                  "pm.collectionVariables.set('lng', lng.toFixed(6));",
+                  "pm.collectionVariables.set('destLat', (lat + 0.05).toFixed(6));",
+                  "// a point ~m metres north of the pickup (1° latitude ≈ 111.2 km)",
+                  "const north = (m) => (lat + m / 111195).toFixed(6);",
+                  "pm.collectionVariables.set('driverA', 'PM-A-' + run);  // ~100 m",
+                  "pm.collectionVariables.set('driverALat', north(100));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Passenger requests a ride",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-rideId"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"passengerId\": \"P001\",\n  \"pickup\": { \"latitude\": {{lat}}, \"longitude\": {{lng}} },\n  \"destination\": { \"latitude\": {{destLat}}, \"longitude\": {{lng}} }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('starts in REQUESTED', () => pm.expect(pm.response.json().status).to.eql(\"REQUESTED\"));",
+                  "pm.test('has rideId', () => pm.expect(pm.response.json().rideId).to.be.a('string'));",
+                  "pm.collectionVariables.set('rideId', pm.response.json().rideId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Offer goes to A",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the ride is DRIVER_ASSIGNED.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/rides/{{rideId}}');",
+                  "const ok = (b) => b.status === 'DRIVER_ASSIGNED' && b.assignedDriverId === pm.collectionVariables.get('driverA');",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the ride is DRIVER_ASSIGNED', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = DRIVER_ASSIGNED', () => pm.expect(pm.response.json().status).to.eql(\"DRIVER_ASSIGNED\"));",
+                  "pm.test('assignedDriverId', () => pm.expect(pm.response.json().assignedDriverId).to.eql(pm.collectionVariables.get('driverA')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "OFFERED driver cannot go OFFLINE → 409",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverA}}/availability",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverA}}",
+                "availability"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"status\": \"OFFLINE\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 409', () => pm.response.to.have.status(409));",
+                  "pm.test('error code INVALID_TRANSITION', () => pm.expect(pm.response.json().code).to.eql('INVALID_TRANSITION'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Passenger cancels (DRIVER_ASSIGNED → CANCELLED)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "cancel"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = CANCELLED', () => pm.expect(pm.response.json().status).to.eql(\"CANCELLED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel again → 200, no-op",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "cancel"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = CANCELLED', () => pm.expect(pm.response.json().status).to.eql(\"CANCELLED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A is AVAILABLE again (compensation)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverA}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverA}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the driver is AVAILABLE.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/drivers/{{driverA}}');",
+                  "const ok = (b) => b.status === 'AVAILABLE';",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the driver is AVAILABLE', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = AVAILABLE', () => pm.expect(pm.response.json().status).to.eql(\"AVAILABLE\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A accepts after cancel → 409",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/offers/{{driverA}}/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "offers",
+                "{{driverA}}",
+                "accept"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 409', () => pm.response.to.have.status(409));",
+                  "pm.test('error code OFFER_NOT_CURRENT', () => pm.expect(pm.response.json().code).to.eql('OFFER_NOT_CURRENT'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Completing a CANCELLED ride → 409",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/complete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "complete"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 409', () => pm.response.to.have.status(409));",
+                  "pm.test('error code INVALID_TRANSITION', () => pm.expect(pm.response.json().code).to.eql('INVALID_TRANSITION'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Dispatch view: offer CANCELLED, saga CANCELLED",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/dispatch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "dispatch"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('saga CANCELLED', () => pm.expect(pm.response.json().saga.status).to.eql('CANCELLED'));",
+                  "pm.test('offer CANCELLED', () => pm.expect(pm.response.json().offers[0].status).to.eql('CANCELLED'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "08 · Cancel after acceptance",
+      "description": "AC-02, AC-05, AC-06. Cancelling an accepted ride returns the driver from BUSY to AVAILABLE.",
+      "item": [
+        {
+          "name": "Setup: driver A ~100 m",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{driverServiceUrl}}/internal/drivers/{{driverA}}",
+              "host": [
+                "{{driverServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "drivers",
+                "{{driverA}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"status\": \"AVAILABLE\", \"latitude\": {{driverALat}}, \"longitude\": {{lng}} }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Each scenario uses its own random spot on the map so scenarios never interfere.",
+                  "const run = Date.now().toString(36);",
+                  "const lat = -50 + Math.random() * 100, lng = -170 + Math.random() * 340;",
+                  "pm.collectionVariables.set('run', run);",
+                  "pm.collectionVariables.set('lat', lat.toFixed(6));",
+                  "pm.collectionVariables.set('lng', lng.toFixed(6));",
+                  "pm.collectionVariables.set('destLat', (lat + 0.05).toFixed(6));",
+                  "// a point ~m metres north of the pickup (1° latitude ≈ 111.2 km)",
+                  "const north = (m) => (lat + m / 111195).toFixed(6);",
+                  "pm.collectionVariables.set('driverA', 'PM-A-' + run);  // ~100 m",
+                  "pm.collectionVariables.set('driverALat', north(100));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Passenger requests a ride",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-rideId"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"passengerId\": \"P001\",\n  \"pickup\": { \"latitude\": {{lat}}, \"longitude\": {{lng}} },\n  \"destination\": { \"latitude\": {{destLat}}, \"longitude\": {{lng}} }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('starts in REQUESTED', () => pm.expect(pm.response.json().status).to.eql(\"REQUESTED\"));",
+                  "pm.test('has rideId', () => pm.expect(pm.response.json().rideId).to.be.a('string'));",
+                  "pm.collectionVariables.set('rideId', pm.response.json().rideId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Offer goes to A",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the ride is DRIVER_ASSIGNED.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/rides/{{rideId}}');",
+                  "const ok = (b) => b.status === 'DRIVER_ASSIGNED' && b.assignedDriverId === pm.collectionVariables.get('driverA');",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the ride is DRIVER_ASSIGNED', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = DRIVER_ASSIGNED', () => pm.expect(pm.response.json().status).to.eql(\"DRIVER_ASSIGNED\"));",
+                  "pm.test('assignedDriverId', () => pm.expect(pm.response.json().assignedDriverId).to.eql(pm.collectionVariables.get('driverA')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A accepts",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/offers/{{driverA}}/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "offers",
+                "{{driverA}}",
+                "accept"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A is BUSY",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverA}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverA}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the driver is BUSY.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/drivers/{{driverA}}');",
+                  "const ok = (b) => b.status === 'BUSY';",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the driver is BUSY', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = BUSY', () => pm.expect(pm.response.json().status).to.eql(\"BUSY\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "BUSY driver cannot go OFFLINE → 409",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverA}}/availability",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverA}}",
+                "availability"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"status\": \"OFFLINE\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 409', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ride is DRIVER_ACCEPTED",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the ride is DRIVER_ACCEPTED.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/rides/{{rideId}}');",
+                  "const ok = (b) => b.status === 'DRIVER_ACCEPTED' && b.assignedDriverId === pm.collectionVariables.get('driverA');",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the ride is DRIVER_ACCEPTED', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = DRIVER_ACCEPTED', () => pm.expect(pm.response.json().status).to.eql(\"DRIVER_ACCEPTED\"));",
+                  "pm.test('assignedDriverId', () => pm.expect(pm.response.json().assignedDriverId).to.eql(pm.collectionVariables.get('driverA')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel an accepted ride (DRIVER_ACCEPTED → CANCELLED)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "cancel"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = CANCELLED', () => pm.expect(pm.response.json().status).to.eql(\"CANCELLED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A goes BUSY → AVAILABLE",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverA}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverA}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the driver is AVAILABLE.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/drivers/{{driverA}}');",
+                  "const ok = (b) => b.status === 'AVAILABLE';",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the driver is AVAILABLE', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = AVAILABLE', () => pm.expect(pm.response.json().status).to.eql(\"AVAILABLE\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "09 · Ride state machine: invalid transitions",
+      "description": "AC-06. Valid transitions succeed, invalid ones return 409 INVALID_TRANSITION, terminal states stay terminal, duplicates are no-ops.",
+      "item": [
+        {
+          "name": "Setup: new area with no drivers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/healthz",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "healthz"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Each scenario uses its own random spot on the map so scenarios never interfere.",
+                  "const run = Date.now().toString(36);",
+                  "const lat = -50 + Math.random() * 100, lng = -170 + Math.random() * 340;",
+                  "pm.collectionVariables.set('run', run);",
+                  "pm.collectionVariables.set('lat', lat.toFixed(6));",
+                  "pm.collectionVariables.set('lng', lng.toFixed(6));",
+                  "pm.collectionVariables.set('destLat', (lat + 0.05).toFixed(6));",
+                  "// a point ~m metres north of the pickup (1° latitude ≈ 111.2 km)",
+                  "const north = (m) => (lat + m / 111195).toFixed(6);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Passenger requests a ride",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-rideId"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"passengerId\": \"P001\",\n  \"pickup\": { \"latitude\": {{lat}}, \"longitude\": {{lng}} },\n  \"destination\": { \"latitude\": {{destLat}}, \"longitude\": {{lng}} }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('starts in REQUESTED', () => pm.expect(pm.response.json().status).to.eql(\"REQUESTED\"));",
+                  "pm.test('has rideId', () => pm.expect(pm.response.json().rideId).to.be.a('string'));",
+                  "pm.collectionVariables.set('rideId', pm.response.json().rideId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "No driver nearby: ride stays MATCHING",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the ride is MATCHING.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/rides/{{rideId}}');",
+                  "const ok = (b) => b.status === 'MATCHING' && b.assignedDriverId === null;",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the ride is MATCHING', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = MATCHING', () => pm.expect(pm.response.json().status).to.eql(\"MATCHING\"));",
+                  "pm.test('assignedDriverId', () => pm.expect(pm.response.json().assignedDriverId).to.eql(null));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Complete while MATCHING → 409",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/complete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "complete"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 409', () => pm.response.to.have.status(409));",
+                  "pm.test('error code INVALID_TRANSITION', () => pm.expect(pm.response.json().code).to.eql('INVALID_TRANSITION'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel while MATCHING → 200",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "cancel"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = CANCELLED', () => pm.expect(pm.response.json().status).to.eql(\"CANCELLED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Complete a CANCELLED (terminal) ride → 409",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/complete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "complete"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 409', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "History: REQUESTED → MATCHING → CANCELLED",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "history"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('transitions', () => pm.expect(pm.response.json().transitions.map(t => t.to)).to.eql(['REQUESTED', 'MATCHING', 'CANCELLED']));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "10 · Driver availability & latest location",
+      "description": "AC-02, AC-03. OFFLINE ⇄ AVAILABLE through the API, latest location stored and used by matching. A ride waiting in MATCHING is retried as soon as a driver becomes available.",
+      "item": [
+        {
+          "name": "Setup: driver A OFFLINE ~5 km away",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{driverServiceUrl}}/internal/drivers/{{driverA}}",
+              "host": [
+                "{{driverServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "drivers",
+                "{{driverA}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"status\": \"OFFLINE\", \"latitude\": {{driverALat}}, \"longitude\": {{lng}} }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Each scenario uses its own random spot on the map so scenarios never interfere.",
+                  "const run = Date.now().toString(36);",
+                  "const lat = -50 + Math.random() * 100, lng = -170 + Math.random() * 340;",
+                  "pm.collectionVariables.set('run', run);",
+                  "pm.collectionVariables.set('lat', lat.toFixed(6));",
+                  "pm.collectionVariables.set('lng', lng.toFixed(6));",
+                  "pm.collectionVariables.set('destLat', (lat + 0.05).toFixed(6));",
+                  "// a point ~m metres north of the pickup (1° latitude ≈ 111.2 km)",
+                  "const north = (m) => (lat + m / 111195).toFixed(6);",
+                  "pm.collectionVariables.set('driverA', 'PM-A-' + run);  // ~5000 m",
+                  "pm.collectionVariables.set('driverALat', north(5000));",
+                  "pm.collectionVariables.set('driverB', 'PM-B-' + run);  // ~50 m",
+                  "pm.collectionVariables.set('driverBLat', north(50));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A: OFFLINE → AVAILABLE",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverA}}/availability",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverA}}",
+                "availability"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"status\": \"AVAILABLE\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = AVAILABLE', () => pm.expect(pm.response.json().status).to.eql(\"AVAILABLE\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A: AVAILABLE again → 200, no-op",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverA}}/availability",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverA}}",
+                "availability"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"status\": \"AVAILABLE\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = AVAILABLE', () => pm.expect(pm.response.json().status).to.eql(\"AVAILABLE\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A: AVAILABLE → OFFLINE",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverA}}/availability",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverA}}",
+                "availability"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"status\": \"OFFLINE\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = OFFLINE', () => pm.expect(pm.response.json().status).to.eql(\"OFFLINE\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ride requested (A is offline and 5 km away)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-rideId"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"passengerId\": \"P001\",\n  \"pickup\": { \"latitude\": {{lat}}, \"longitude\": {{lng}} },\n  \"destination\": { \"latitude\": {{destLat}}, \"longitude\": {{lng}} }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('starts in REQUESTED', () => pm.expect(pm.response.json().status).to.eql(\"REQUESTED\"));",
+                  "pm.test('has rideId', () => pm.expect(pm.response.json().rideId).to.be.a('string'));",
+                  "pm.collectionVariables.set('rideId', pm.response.json().rideId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Nobody eligible: MATCHING",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the ride is MATCHING.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/rides/{{rideId}}');",
+                  "const ok = (b) => b.status === 'MATCHING' && b.assignedDriverId === null;",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the ride is MATCHING', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = MATCHING', () => pm.expect(pm.response.json().status).to.eql(\"MATCHING\"));",
+                  "pm.test('assignedDriverId', () => pm.expect(pm.response.json().assignedDriverId).to.eql(null));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A moves next to the pickup (latest location)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverA}}/location",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverA}}",
+                "location"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"latitude\": {{driverBLat}}, \"longitude\": {{lng}} }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('latest location stored', () => pm.expect(pm.response.json().latitude).to.be.closeTo(Number(pm.collectionVariables.get('driverBLat')), 1e-6));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A goes AVAILABLE → the waiting ride is matched using the latest location",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverA}}/availability",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverA}}",
+                "availability"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"status\": \"AVAILABLE\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ride is DRIVER_ASSIGNED to A",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 15 s) until the ride is DRIVER_ASSIGNED.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/rides/{{rideId}}');",
+                  "const ok = (b) => b.status === 'DRIVER_ASSIGNED' && b.assignedDriverId === pm.collectionVariables.get('driverA');",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the ride is DRIVER_ASSIGNED', body);",
+                  "  });",
+                  "})(60);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = DRIVER_ASSIGNED', () => pm.expect(pm.response.json().status).to.eql(\"DRIVER_ASSIGNED\"));",
+                  "pm.test('assignedDriverId', () => pm.expect(pm.response.json().assignedDriverId).to.eql(pm.collectionVariables.get('driverA')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET driver A shows the latest location",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverA}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverA}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('latest latitude', () => pm.expect(pm.response.json().latitude).to.be.closeTo(Number(pm.collectionVariables.get('driverBLat')), 1e-6));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cleanup: cancel the ride",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "cancel"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "11 · Offer timeout (slow, ~35 s)",
+      "description": "AC-05, AC-06. No answer within OFFER_TIMEOUT (default 30 s) is treated as a rejection. Tip: start the stack with `OFFER_TIMEOUT=5s make up` to make this fast.",
+      "item": [
+        {
+          "name": "Setup: driver A ~100 m",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{driverServiceUrl}}/internal/drivers/{{driverA}}",
+              "host": [
+                "{{driverServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "drivers",
+                "{{driverA}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"status\": \"AVAILABLE\", \"latitude\": {{driverALat}}, \"longitude\": {{lng}} }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Each scenario uses its own random spot on the map so scenarios never interfere.",
+                  "const run = Date.now().toString(36);",
+                  "const lat = -50 + Math.random() * 100, lng = -170 + Math.random() * 340;",
+                  "pm.collectionVariables.set('run', run);",
+                  "pm.collectionVariables.set('lat', lat.toFixed(6));",
+                  "pm.collectionVariables.set('lng', lng.toFixed(6));",
+                  "pm.collectionVariables.set('destLat', (lat + 0.05).toFixed(6));",
+                  "// a point ~m metres north of the pickup (1° latitude ≈ 111.2 km)",
+                  "const north = (m) => (lat + m / 111195).toFixed(6);",
+                  "pm.collectionVariables.set('driverA', 'PM-A-' + run);  // ~100 m",
+                  "pm.collectionVariables.set('driverALat', north(100));",
+                  "pm.collectionVariables.set('driverB', 'PM-B-' + run);  // ~600 m",
+                  "pm.collectionVariables.set('driverBLat', north(600));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Setup: driver B ~600 m AVAILABLE (fixture API)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{driverServiceUrl}}/internal/drivers/{{driverB}}",
+              "host": [
+                "{{driverServiceUrl}}"
+              ],
+              "path": [
+                "internal",
+                "drivers",
+                "{{driverB}}"
+              ]
+            },
+            "description": "Development/test fixture on driver-service (port 8082). Not exposed by the gateway; driver registration is out of scope.",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"status\": \"AVAILABLE\", \"latitude\": {{driverBLat}}, \"longitude\": {{lng}} }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = AVAILABLE', () => pm.expect(pm.response.json().status).to.eql(\"AVAILABLE\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Passenger requests a ride",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-rideId"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"passengerId\": \"P001\",\n  \"pickup\": { \"latitude\": {{lat}}, \"longitude\": {{lng}} },\n  \"destination\": { \"latitude\": {{destLat}}, \"longitude\": {{lng}} }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('starts in REQUESTED', () => pm.expect(pm.response.json().status).to.eql(\"REQUESTED\"));",
+                  "pm.test('has rideId', () => pm.expect(pm.response.json().rideId).to.be.a('string'));",
+                  "pm.collectionVariables.set('rideId', pm.response.json().rideId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Offer goes to A",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the ride is DRIVER_ASSIGNED.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/rides/{{rideId}}');",
+                  "const ok = (b) => b.status === 'DRIVER_ASSIGNED' && b.assignedDriverId === pm.collectionVariables.get('driverA');",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the ride is DRIVER_ASSIGNED', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = DRIVER_ASSIGNED', () => pm.expect(pm.response.json().status).to.eql(\"DRIVER_ASSIGNED\"));",
+                  "pm.test('assignedDriverId', () => pm.expect(pm.response.json().assignedDriverId).to.eql(pm.collectionVariables.get('driverA')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A does not answer… after the timeout the ride is offered to B (≈ 31 s)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 45 s) until the ride is DRIVER_ASSIGNED.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/rides/{{rideId}}');",
+                  "const ok = (b) => b.status === 'DRIVER_ASSIGNED' && b.assignedDriverId === pm.collectionVariables.get('driverB');",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the ride is DRIVER_ASSIGNED', body);",
+                  "  });",
+                  "})(180);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = DRIVER_ASSIGNED', () => pm.expect(pm.response.json().status).to.eql(\"DRIVER_ASSIGNED\"));",
+                  "pm.test('assignedDriverId', () => pm.expect(pm.response.json().assignedDriverId).to.eql(pm.collectionVariables.get('driverB')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A is AVAILABLE again",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/drivers/{{driverA}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "drivers",
+                "{{driverA}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Dispatch is asynchronous: wait (max 10 s) until the driver is AVAILABLE.",
+                  "const url = pm.variables.replaceIn('{{baseUrl}}/drivers/{{driverA}}');",
+                  "const ok = (b) => b.status === 'AVAILABLE';",
+                  "(function poll(n) {",
+                  "  pm.sendRequest(url, (err, res) => {",
+                  "    let body = {};",
+                  "    try { body = res.json(); } catch (e) {}",
+                  "    if (!err && ok(body)) return;",
+                  "    if (n > 0) setTimeout(() => poll(n - 1), 250);",
+                  "    else console.warn('timed out waiting until the driver is AVAILABLE', body);",
+                  "  });",
+                  "})(40);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status = AVAILABLE', () => pm.expect(pm.response.json().status).to.eql(\"AVAILABLE\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A accepts too late → 409",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/offers/{{driverA}}/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "offers",
+                "{{driverA}}",
+                "accept"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 409', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Dispatch view: A's offer EXPIRED, A excluded",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/dispatch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "dispatch"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('first offer EXPIRED', () => pm.expect(pm.response.json().offers[0].status).to.eql('EXPIRED'));",
+                  "pm.test('A excluded (EXPIRED)', () => pm.expect(pm.response.json().exclusions[pm.collectionVariables.get('driverA')]).to.eql('EXPIRED'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cleanup: cancel the ride",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rides/{{rideId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rides",
+                "{{rideId}}",
+                "cancel"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
